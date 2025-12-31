@@ -279,6 +279,9 @@ app/api/app/data/*.db
 app/api/app/data/*.sqlite
 app/api/app/data/*.sqlite3
 
+# Tutorials (local development only, not for version control)
+tutorials/
+
 # Logs
 *.log
 logs/
