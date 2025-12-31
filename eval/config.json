@@ -1,0 +1,8 @@
+{
+    "metrics": [
+        "acceptance_rate",
+        "suggestion_approval_rate",
+        "amount_of_unique_documents_reviewed",
+        "issue_type_distribution"
+    ]
+}

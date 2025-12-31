@@ -1,0 +1,54 @@
+id: template_standard_flow
+name: Template Standard Flow
+environment_variables:
+  DOCUMENT_INTELLIGENCE_ENDPOINT: ${aisconns.endpoint}
+  STORAGE_URL_PREFIX: ${document_storage.url_prefix}
+  AZURE_OPENAI_ENDPOINT: ${aisconns_aoai.api_base}
+environment:
+  python_requirements_txt: requirements.txt
+additional_includes:
+- ../../common
+inputs:
+  pdf_name:
+    type: string
+    default: sample.pdf
+    is_chat_input: false
+  stream:
+    type: bool
+    is_chat_input: false
+    default: true
+  pagination:
+    type: int
+    is_chat_input: false
+    default: 32
+outputs:
+  flow_output_streaming:
+    type: string
+    reference: ${process_streaming.output}
+  flow_output:
+    type: string
+    reference: ${process.output}
+nodes:
+- name: process_streaming
+  type: python
+  source:
+    type: code
+    path: process_streaming.py
+  inputs:
+    pagination: ${inputs.pagination}
+    pdf_name: ${inputs.pdf_name}
+  activate:
+    when: ${inputs.stream}
+    is: true
+  use_variants: false
+- name: process
+  type: python
+  source:
+    type: code
+    path: process.py
+  inputs:
+    pdf_name: ${inputs.pdf_name}
+  activate:
+    when: ${inputs.stream}
+    is: false
+  use_variants: false

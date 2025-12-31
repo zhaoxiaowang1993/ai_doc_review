@@ -1,0 +1,48 @@
+id: evaluation_prompt_flow
+name: Evaluation Flow
+environment:
+  python_requirements_txt: requirements.txt
+additional_includes:
+  - ../../eval/
+inputs:
+  llm_output:
+    type: object
+    is_chat_input: false
+  gt_json:
+    type: object
+    is_chat_input: false
+outputs:
+  association_results:
+    type: object
+    reference: ${evaluation.output}
+  aggregated_results:
+    type: object
+    reference: ${aggregate.output}
+nodes:
+  - name: evaluation
+    type: python
+    source:
+      type: code
+      path: evaluation.py
+    inputs:
+      gt_json: ${inputs.gt_json}
+      llm_output: ${inputs.llm_output}
+    use_variants: false
+  - name: aggregate
+    type: python
+    source:
+      type: code
+      path: aggregate.py
+    inputs:
+      processed_results: ${evaluation.output}
+    aggregation: true
+    use_variants: false
+  - name: log_metrics
+    type: python
+    source:
+      type: code
+      path: log_metrics.py
+    inputs:
+      aggregated_results: ${aggregate.output}
+    aggregation: true
+    use_variants: false

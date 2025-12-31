@@ -1,0 +1,6 @@
+$schema: https://azuremlschemas.azureedge.net/latest/model.schema.json
+name: ai-doc-review-model
+path: .
+description: AML model for AI Doc Review
+properties:
+  azureml.promptflow.source_flow_id: ai_doc_review

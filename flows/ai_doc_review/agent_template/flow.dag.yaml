@@ -1,0 +1,87 @@
+id: template_standard_flow
+name: Template Standard Flow
+environment:
+  python_requirements_txt: requirements.txt
+additional_includes:
+- ../../../common
+inputs:
+  text:
+    type: string
+    is_chat_input: false
+outputs:
+  agent_output:
+    type: string
+    reference: ${merge.output}
+nodes:
+- name: guidelines_prompt
+  type: prompt
+  source:
+    type: code
+    path: guidelines.jinja2
+  inputs: {}
+  use_variants: false
+- name: aggregate
+  type: python
+  source:
+    type: code
+    path: aggregate.py
+  inputs:
+    unparsed_shots: ${llm_multishot.output}
+  use_variants: false
+- name: consolidator_prompt
+  type: prompt
+  source:
+    type: code
+    path: consolidator.jinja2
+  inputs:
+    guidelines: ${guidelines_prompt.output}
+  use_variants: false
+- name: merge
+  type: python
+  source:
+    type: code
+    path: merge.py
+  inputs:
+    agg_outputs: ${aggregate.output}
+    consolidator_outputs: ${consolidator.output}
+  use_variants: false
+- name: llm_multishot
+  type: python
+  source:
+    type: package
+    tool: typed_llm.tools.typed_llm.typed_llm
+  inputs:
+    connection: aisconns_aoai
+    assistant_prompt: ""
+    deployment_name: gpt-4o
+    module_path: common/models.py
+    number_of_requests: 5
+    response_type: AllSingleShotIssues
+    system_prompt: ${agent_prompt.output}
+    temperature: 1
+    user_prompt: ${inputs.text}
+  use_variants: false
+- name: consolidator
+  type: python
+  source:
+    type: package
+    tool: typed_llm.tools.typed_llm.typed_llm
+  inputs:
+    connection: aisconns_aoai
+    assistant_prompt: ""
+    deployment_name: gpt-4o
+    module_path: common/models.py
+    number_of_requests: 1
+    response_type: AllConsolidatorIssues
+    system_prompt: ${consolidator_prompt.output}
+    temperature: 1
+    user_prompt: ${aggregate.output}
+  use_variants: false
+- name: agent_prompt
+  type: prompt
+  source:
+    type: code
+    path: agent.jinja2
+  inputs:
+    guidelines: ${guidelines_prompt.output}
+  use_variants: false

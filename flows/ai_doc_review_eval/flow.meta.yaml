@@ -1,0 +1,9 @@
+$schema: https://azuremlschemas.azureedge.net/latest/flow.schema.json
+name: EvaluationPromptFlow
+display_name: Evaluation Flow for Model and Ground Truth
+type: evaluate
+path: ./flow.dag.yaml
+properties:
+  promptflow.stage: prod
+  promptflow.section: evaluate
+  promptflow.batch_inputs: input_batch.json

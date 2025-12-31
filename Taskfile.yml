@@ -1,0 +1,183 @@
+version: "3.40.1"
+
+dotenv: [".env", "flows/.env", "{{.HOME}}/.env"]
+
+output: "prefixed"
+
+includes:
+  infra:
+    taskfile: ./.task/infra.yml
+    flatten: true
+  app:
+    taskfile: ./.task/app.yml
+    flatten: true
+  flow:
+    taskfile: ./.task/flow.yml
+    flatten: true
+
+tasks:
+  deps-check:
+    desc: Check toolchain dependencies.
+    silent: true
+    cmds:
+      - echo -e "\033[0;32mChecking dependencies...\033[0m"
+      - |
+        if ! command -v az > /dev/null; then
+          echo "Error: az is not installed. Please install azure-cli to continue."
+          exit 1
+        fi
+      - |
+        if ! command -v terraform > /dev/null; then
+          echo "ERROR: terraform is not installed. Please install terraform to continue."
+          exit 1
+        fi
+      - |
+        if ! command -v python3 > /dev/null; then
+          echo "Error: python3 is not installed. Please install python to continue."
+          exit 1
+        fi
+      - |
+        if ! command -v node > /dev/null; then
+          echo "Error: node is not installed. Please install node to continue."
+          exit 1
+        fi
+      - |
+        if ! command -v mkcert > /dev/null; then
+          echo "Error: mkcert is not installed. Please install mkcert to continue."
+          exit 1
+        fi
+      - |
+        if ! command -v pfazure > /dev/null; then
+          echo "Error: pfazure is not installed. Please install pfazure to continue."
+          exit 1
+        fi
+      - |
+        if ! command -v git > /dev/null; then
+          echo "Error: git is not installed. Please install git to continue."
+          exit 1
+        fi
+
+  deps-install:
+    desc: Install toolchain dependencies.
+    silent: true
+    cmds:
+      - |
+        if ! command -v az > /dev/null; then
+          echo -e "\033[0;32mInstalling azure-cli...\033[0m"
+          cd "$(mktemp -d)" || exit 1
+
+          sudo apt-get update -qq > /dev/null
+          sudo apt-get install -qq -y \
+            apt-transport-https \
+            ca-certificates \
+            curl \
+            gnupg \
+            lsb-release > /dev/null
+
+          wget -q -O- https://packages.microsoft.com/keys/microsoft.asc |
+          gpg --dearmor | \
+          sudo tee /usr/share/keyrings/microsoft-archive-keyring.gpg > /dev/null
+          sudo chmod go+r /usr/share/keyrings/microsoft-archive-keyring.gpg
+
+          echo "deb [signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] \
+          https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" | \
+          sudo tee /etc/apt/sources.list.d/azure-cli.list > /dev/null
+
+          sudo apt-get update -qq > /dev/null
+          sudo apt-get install -qq -y \
+            azure-cli > /dev/null
+
+          az extension add --name ml > /dev/null
+        fi
+      - |
+        if ! command -v terraform > /dev/null; then
+          echo -e "\033[0;32mInstalling terraform...\033[0m"
+          cd "$(mktemp -d)" || exit 1
+
+          wget -q -O- https://apt.releases.hashicorp.com/gpg | \
+          gpg --dearmor | \
+          sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+          https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+          sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+
+          sudo apt-get update -qq > /dev/null
+          sudo apt-get install -qq -y \
+            terraform > /dev/null
+        fi
+      - |
+        if ! command -v python3 > /dev/null; then
+          echo -e "\033[0;32mInstalling python...\033[0m"
+          cd "$(mktemp -d)" || exit 1
+
+          sudo apt-get update -qq > /dev/null
+          sudo apt-get install -qq -y \
+            python3 \
+            python3-pip \
+            python3-venv > /dev/null
+        fi
+      - |
+        if ! command -v node > /dev/null; then
+          echo -e "\033[0;32mInstalling node...\033[0m"
+          cd "$(mktemp -d)" || exit 1
+
+          sudo curl -fsSL https://raw.githubusercontent.com/tj/n/master/bin/n -o /opt/n
+          sudo bash /opt/n install 22 > /dev/null
+        else
+          NODE_VERSION=$(node -v | sed 's/v//;s/\..*//')
+          if [ "$NODE_VERSION" -ne 22 ]; then
+            echo -e "\033[0;33mUpdating node...\033[0m"
+            cd "$(mktemp -d)" || exit 1
+
+            if [ -n "$GITHUB_ENV" ]; then
+              sudo bash n install 22 > /dev/null
+            else
+              sudo bash /opt/n install 22 > /dev/null
+            fi
+          fi
+        fi
+      - |
+        if ! command -v mkcert > /dev/null; then
+          echo -e "\033[0;32mInstalling mkcert...\033[0m"
+          cd "$(mktemp -d)" || exit 1
+
+          curl -sLf -o ./mkcert https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64
+          chmod +x mkcert
+          sudo mv mkcert /usr/local/bin/mkcert
+        fi
+      - |
+        if ! command -v pf > /dev/null; then
+          echo -e "\033[0;32mInstalling promptflow...\033[0m"
+          cd "$(mktemp -d)" || exit 1
+
+          sudo mkdir -p /opt/python3/venvs/promptflow
+          sudo python3 -m venv /opt/python3/venvs/promptflow
+          sudo /opt/python3/venvs/promptflow/bin/pip3 install promptflow promptflow-tools promptflow-azure --quiet
+          sudo ln -s /opt/python3/venvs/promptflow/bin/pf /usr/local/bin/pf
+          sudo ln -s /opt/python3/venvs/promptflow/bin/pfazure /usr/local/bin/pfazure
+        fi
+
+  deps-setup:
+    desc: Setup toolchain dependencies.
+    silent: true
+    deps:
+      - deps-check
+    cmds:
+    - echo -e "\033[0;32mSetting up environment...\033[0m"
+    - |
+      if [ ! -z "$SKIP_DEPS_SETUP" ]; then
+          echo "SKIP_DEPS_SETUP is set. Skipping environment setup."
+          exit 0
+      fi
+
+      if ! az account show >/dev/null 2>&1; then
+          echo -e "You are not logged in. Please run 'az login' to authenticate."
+          exit 1
+      fi
+
+      feature_state=$(az feature show --name AllowNSPInPublicPreview --namespace Microsoft.Network --query 'properties.state' -o tsv)
+      if [ "$feature_state" == "NotRegistered" ]; then
+          echo "Registering feature 'AllowNSPInPublicPreview'..."
+          az feature register --name AllowNSPInPublicPreview --namespace Microsoft.Network --only-show-errors
+      fi
