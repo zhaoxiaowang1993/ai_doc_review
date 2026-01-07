@@ -1,0 +1,79 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ALIYUN_ACR_REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.ALIYUN_ACR_REGISTRY }}/${{ secrets.ALIYUN_ACR_NAMESPACE }}/${{ secrets.ALIYUN_ACR_REPO }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=ref,event=branch
+            type=sha
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: resolve-tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.ALIYUN_SERVER_HOST }}
+          username: ${{ secrets.ALIYUN_SERVER_USER }}
+          key: ${{ secrets.ALIYUN_SSH_PRIVATE_KEY }}
+          script: |
+            docker login ${{ secrets.ALIYUN_ACR_REGISTRY }} -u "${{ secrets.ALIYUN_ACR_USERNAME }}" -p "${{ secrets.ALIYUN_ACR_PASSWORD }}"
+            IMAGE="${{ secrets.ALIYUN_ACR_REGISTRY }}/${{ secrets.ALIYUN_ACR_NAMESPACE }}/${{ secrets.ALIYUN_ACR_REPO }}:${{ steps.tag.outputs.TAG }}"
+            docker pull "$IMAGE"
+            docker stop ai-doc-review || true
+            docker rm ai-doc-review || true
+            
+            # Ensure data directory exists
+            mkdir -p /root/workspace/ai-doc-review-data
+            
+            # Check for .prod.env file
+            ENV_FILE="/root/workspace/ai-doc-review/app/api/.prod.env"
+            if [ -f "$ENV_FILE" ]; then
+              ENV_OPT="--env-file $ENV_FILE"
+            else
+              echo "WARNING: Environment file not found at $ENV_FILE"
+              ENV_OPT=""
+            fi
+            
+            docker run -d --name ai-doc-review -p 1231:1231 -v /root/workspace/ai-doc-review-data:/app/app/api/app/data $ENV_OPT --restart unless-stopped "$IMAGE"

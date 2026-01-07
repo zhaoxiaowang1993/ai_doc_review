@@ -19,7 +19,7 @@ langgraph-checkpoint>=3.0.1
 
 # Database
 aiosqlite==0.20.0
-pysqlite3-binary==0.5.4.post2
+# pysqlite3-binary==0.5.4.post2  # commented out: arm64 wheel unavailable and unused
 
 # HTTP client
 httpx==0.28.1

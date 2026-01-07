@@ -1,0 +1,27 @@
+{
+    "python.defaultInterpreterPath": "${env:HOME}/anaconda3/envs/doc-review-310/bin/python",
+    "python.terminal.activateEnvironment": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/app",
+        "${workspaceFolder}/common"
+    ],
+    "python.analysis.autoImportCompletions": true,
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "cursorpyright.analysis.autoImportCompletions": true,
+    "cursorpyright.analysis.extraPaths": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/app",
+        "${workspaceFolder}/common"
+    ]
+}
+

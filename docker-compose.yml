@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  ai-doc-review:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-doc-review
+    env_file:
+      - ./app/api/.env
+    ports:
+      - "1231:1231"
+    environment:
+      # 通用配置
+      - DEBUG=false
+      - SERVE_STATIC=true
+      - LOG_LEVEL=INFO
+      - LOG_TO_FILE=false
+      
+      # 认证配置（可选）
+      # - AAD_CLIENT_ID=${AAD_CLIENT_ID:-}
+      # - AAD_TENANT_ID=${AAD_TENANT_ID:-}
+      # - AAD_USER_IMPERSONATION_SCOPE_ID=${AAD_USER_IMPERSONATION_SCOPE_ID:-}
+      
+      # 本地存储/数据库配置
+      - LOCAL_DOCS_DIR=./app/data/documents
+      - SQLITE_PATH=./app/data/app.db
+      
+      # MinerU 配置（API Key 等敏感信息从 app/api/.env 加载，这里只保留非敏感默认值）
+      - MINERU_BASE_URL=${MINERU_BASE_URL:-https://mineru.net}
+      - MINERU_MODEL_VERSION=${MINERU_MODEL_VERSION:-vlm}
+      - MINERU_POLL_INTERVAL_SEC=${MINERU_POLL_INTERVAL_SEC:-1.0}
+      - MINERU_MAX_WAIT_SEC=${MINERU_MAX_WAIT_SEC:-300.0}
+      - MINERU_CACHE_ARTIFACTS=${MINERU_CACHE_ARTIFACTS:-true}
+      - MINERU_CACHE_DIR=./app/data/mineru
+      - MINERU_BBOX_ORIGIN=${MINERU_BBOX_ORIGIN:-top-left}
+      - MINERU_BBOX_UNITS=px
+      - MINERU_BBOX_CONTENT_COVERAGE=0.85
+      
+      # LLM (DeepSeek) 配置（API Key 从 app/api/.env 加载）
+      - DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+      
+      # 分页配置
+      - PAGINATION=${PAGINATION:-32}
+    volumes:
+      # 持久化数据目录（文档、数据库、缓存）
+      - ./app/api/app/data:/app/app/api/app/data
+      # 可选：挂载环境变量文件
+      - ./app/api/.env:/app/app/api/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:1231/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ai-doc-review-network
+
+networks:
+  ai-doc-review-network:
+    driver: bridge
