@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   ai-doc-review:
     # 镜像名称通过环境变量传入
