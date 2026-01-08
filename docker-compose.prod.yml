@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  ai-doc-review:
+    # 镜像名称通过环境变量传入
+    # 在部署脚本中设置: export IMAGE_NAME=...
+    image: ${IMAGE_NAME}
+    container_name: ai-doc-review
+    
+    # 环境变量文件
+    # 对应服务器路径: /root/workspace/ai-doc-review/app/api/.prod.env
+    env_file:
+      - ./app/api/.prod.env
+      
+    ports:
+      - "1231:1231"
+      
+    environment:
+      # 确保容器内使用正确的数据路径 (覆盖 Dockerfile 默认值)
+      - LOCAL_DOCS_DIR=/app/app/api/app/data/documents
+      - MINERU_CACHE_DIR=/app/app/api/app/data/mineru
+      
+    volumes:
+      # 数据持久化: 主机目录:容器目录
+      # 修改为 /root/workspace/ai-doc-review/ai-doc-review-data 以保持整洁，
+      # 或者直接放在 /root/workspace/ai-doc-review/data 也可以，
+      # 这里根据用户需求: /root/workspace/ai-doc-review/ai-doc-review/data 看起来有点深，
+      # 再次确认用户需求是 "改为/root/workspace/ai-doc-review/ai-doc-review/data"
+      # 注意：部署脚本的工作目录是 /root/workspace/ai-doc-review
+      # 所以相对路径 ./ai-doc-review/data 即可对应 /root/workspace/ai-doc-review/ai-doc-review/data
+      - ./ai-doc-review/data:/app/app/api/app/data
+      
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:1231/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      
+    networks:
+      - ai-doc-review-network
+
+networks:
+  ai-doc-review-network:
+    driver: bridge
