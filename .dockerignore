@@ -164,6 +164,7 @@ docker-compose*.yml
 .env
 .env.*
 !app/api/.env
+!app/api/.prod.env
 !.env.example
 
 # 启动脚本（不需要在容器中）

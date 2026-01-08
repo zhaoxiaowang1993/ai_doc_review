@@ -69,9 +69,10 @@ RUN grep -v "^common==" app/api/requirements.txt > /tmp/requirements.txt && \
 # 复制后端源代码
 COPY app/api/ ./app/api/
 
-# 复制本地 env（用于传入 DeepSeek/MinerU 等密钥）
-# 若 .env 不存在或被 .dockerignore 排除，不会影响构建
-COPY app/api/.env ./app/api/.env
+# 处理环境变量文件
+# app/api/.env 和 app/api/.prod.env 已包含在 COPY app/api/ ./app/api/ 中（需在 .dockerignore 放行）
+# 如果存在 .prod.env，优先使用它作为 .env
+RUN if [ -f app/api/.prod.env ]; then cp app/api/.prod.env app/api/.env; fi
 
 # 从前端构建阶段复制构建产物（vite 输出到 ../api/www，即 /app/api/www）
 COPY --from=frontend-builder /app/api/www ./app/api/www
