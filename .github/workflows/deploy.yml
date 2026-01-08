@@ -36,7 +36,10 @@ jobs:
             type=ref,event=branch,enable=${{ github.ref == 'refs/heads/main' }},suffix=,prefix=
             # 提交哈希：取前7位（简洁唯一）
             type=sha,format=short
-      - uses: docker/build-push-action@v5
+      # 构建并推送多架构镜像
+      - name: Build and Push
+        id: build-push
+        uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64  # 适配阿里云服务器架构
@@ -45,6 +48,15 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true  # 禁用缓存，保证镜像最新
           pull: true      # 拉取最新基础镜像
+
+      # 构建失败时的诊断提示（通过 Annotations 显示）
+      - name: Diagnose Build Failure
+        if: failure() && steps.build-push.outcome == 'failure'
+        run: |
+          echo "::error title=Build/Push Failed::Docker build or push failed. Common causes:"
+          echo "::error::1. ACR Credentials expired or incorrect (Check secrets.ALIYUN_ACR_PASSWORD)"
+          echo "::error::2. Insufficient permissions (RAM user needs 'cr:PushRepository' or 'AliyunContainerRegistryFullAccess')"
+          echo "::error::3. Repository does not exist (Check ALIYUN_ACR_NAMESPACE/REPO)"
 
   deploy:
     runs-on: ubuntu-latest
@@ -78,12 +90,19 @@ jobs:
           # 服务器端执行的部署脚本（完善容错 + 对齐本地逻辑）
           script: |
             set -e  # 任意命令失败则终止脚本
+            
+            # 定义错误处理函数（输出 GitHub Annotation 格式）
+            handle_error() {
+              echo "::error title=Deploy Script Failed::Command failed at line $1"
+            }
+            trap 'handle_error $LINENO' ERR
+            
             echo "=== Start deploying ai-doc-review ==="
             
             # 1. 登录阿里云镜像库（避免服务器登录态过期）
             echo "Step 1: Login to Aliyun ACR"
             docker login ${{ secrets.ALIYUN_ACR_REGISTRY }} -u "${{ secrets.ALIYUN_ACR_USERNAME }}" -p "${{ secrets.ALIYUN_ACR_PASSWORD }}" || {
-              echo "ERROR: ACR login failed"
+              echo "::error title=ACR Login Failed::Failed to login to Aliyun ACR. Check credentials."
               exit 1
             }
             
@@ -96,9 +115,15 @@ jobs:
               if docker pull "$IMAGE"; then
                 break
               fi
-              echo "Pull failed, retry ${i}/3..."
+              echo "::warning title=Image Pull Retry::Pull failed, retrying ${i}/3..."
               sleep 5
             done
+            # 再次检查拉取结果，确保最后一次尝试成功（因为 set -e 可能不会在循环中生效，取决于 shell）
+            # 显式验证镜像是否存在
+            if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
+               echo "::error title=Image Pull Failed::Failed to pull image $IMAGE after 3 attempts."
+               exit 1
+            fi
             
             # 4. 停止并删除旧容器（容错：无容器时不报错）
             echo "Step 3: Stop and remove old container"
@@ -117,7 +142,7 @@ jobs:
               ENV_OPT="--env-file $ENV_FILE"
               echo "Using environment file: $ENV_FILE"
             else
-              echo "WARNING: Environment file not found at $ENV_FILE, running without env file"
+              echo "::warning title=Env File Missing::Environment file not found at $ENV_FILE, running without env file"
               ENV_OPT=""
             fi
             
@@ -140,7 +165,7 @@ jobs:
               echo "=== Deployment succeeded! Container is running ==="
               docker ps | grep ai-doc-review
             else
-              echo "=== Deployment failed! Container not running ==="
+              echo "::error title=Container Startup Failed::Container is not running. Check logs below:"
               docker logs ai-doc-review
               exit 1
             fi
