@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import Files from "./pages/files/Files";
 import Review from "./pages/review/Review";
+import LandingPage from "./pages/landing/LandingPage";
 import type { ThemeMode } from './theme'
 
 type AppProps = {
@@ -11,18 +12,26 @@ type AppProps = {
 
 function App({ mode, onToggleMode }: AppProps) {
   return (
-    <AppShell mode={mode} onToggleMode={onToggleMode}>
-      <Pages />
-    </AppShell>
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route
+        path="/*"
+        element={
+          <AppShell mode={mode} onToggleMode={onToggleMode}>
+            <AuthorizedPages />
+          </AppShell>
+        }
+      />
+    </Routes>
   );
 }
 
-function Pages() {
+function AuthorizedPages() {
   return (
-      <Routes>
-          <Route path="/" element={<Files />} />
-          <Route path="/review" element={<Review />} />
-      </Routes>
+    <Routes>
+      <Route path="/files" element={<Files />} />
+      <Route path="/review" element={<Review />} />
+    </Routes>
   );
 }
 

@@ -235,13 +235,13 @@ export function AppShell({ mode, onToggleMode, children }: AppShellProps) {
           </div>
 
           <div className={classes.navSectionTitle}>工作台</div>
-          <NavItem to="/" label="文档库" icon={<DocumentBulletListRegular />} />
+          <NavItem to="/files" label="文档库" icon={<DocumentBulletListRegular />} />
         </aside>
 
         <div className={classes.content}>
           <header className={classes.topbar}>
             <div className={classes.titleSection}>
-              {location.pathname !== '/' && (
+              {location.pathname !== '/files' && (
                 <Button
                   appearance="subtle"
                   size="small"
