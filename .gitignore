@@ -167,10 +167,6 @@ app/api/app/data/*.sqlite3
 **/.runs/
 **/.pf/
 
-# Agent & Shared Resources
-.agent/
-.shared/
-
 # Documentation builds
 docs/_build/
 /site
