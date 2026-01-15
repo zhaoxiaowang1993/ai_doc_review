@@ -17,6 +17,16 @@ import logoNew from '../../assets/landing/logo_new.png';
 export default function LandingPage() {
     const navigate = useNavigate();
 
+    useEffect(() => {
+        const body = document.body;
+        const prev = body.getAttribute('data-page');
+        body.setAttribute('data-page', 'landing');
+        return () => {
+            if (prev == null) body.removeAttribute('data-page');
+            else body.setAttribute('data-page', prev);
+        };
+    }, []);
+
     // Typewriter effect
     const [typewriterText, setTypewriterText] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
@@ -72,7 +82,7 @@ export default function LandingPage() {
         },
         {
             quote: "财务报销审核效率提升了3倍，再也不用加班对票据了。",
-            author: "科技公司 财务经理刘姐",
+            author: "某科技公司 财务经理刘姐",
             icon: <PersonRegular />
         },
         {
@@ -82,12 +92,12 @@ export default function LandingPage() {
         },
         {
             quote: "原来总是担心广告法违规，现在发布前扫一下，安心多了。",
-            author: "电商运营 负责人赵赵",
+            author: "电商运营 负责人赵总",
             icon: <PersonRegular />
         },
         {
             quote: "招标文件里的坑都被识别出来了，避免了巨大的经济损失。",
-            author: "工程咨询公司 高级顾问",
+            author: "某工程咨询公司 高级顾问",
             icon: <BuildingRegular />
         }
     ];

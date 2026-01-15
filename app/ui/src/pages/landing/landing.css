@@ -12,12 +12,16 @@
   --lp-font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-body {
+body[data-page='landing'] {
   background-color: var(--lp-bg);
   color: var(--lp-text);
   font-family: var(--lp-font-family);
   margin: 0;
   padding: 0;
+}
+
+body[data-page='landing']::before {
+  display: none;
 }
 
 .lp-container {
