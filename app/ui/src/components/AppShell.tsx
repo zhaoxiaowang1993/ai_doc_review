@@ -8,12 +8,12 @@ import {
 import {
   DocumentBulletListRegular,
   SearchRegular,
-  ShieldCheckmarkRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons'
 import { PropsWithChildren } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import logo from '../assets/landing/logo.svg'
 import type { ThemeMode } from '../theme'
 
 type AppShellProps = PropsWithChildren<{
@@ -223,7 +223,7 @@ export function AppShell({ mode, onToggleMode, children }: AppShellProps) {
         <aside className={classes.nav}>
           <div className={classes.brand}>
             <div className={classes.brandIcon}>
-              <ShieldCheckmarkRegular />
+              <img src={logo} alt="Logo" style={{ width: '100%', height: '100%' }} />
             </div>
             <div className={classes.brandInfo}>
               <div className={classes.statusRow}>

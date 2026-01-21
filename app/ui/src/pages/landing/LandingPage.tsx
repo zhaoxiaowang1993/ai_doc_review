@@ -10,6 +10,7 @@ import {
 } from '@fluentui/react-icons';
 import { BentoGrid, BentoGridItem } from '../../components/ui/BentoGrid';
 import heroIllustration from '../../assets/landing/hero_illustration.png';
+import logo from '../../assets/landing/logo.svg';
 
 // Import generated assets
 import bentoMedia from '../../assets/landing/bento_media.png';
@@ -67,32 +68,32 @@ export default function LandingPage() {
         {
             title: "自媒体创作",
             description: "精准检测敏感词，发布前快速校验，防止平台限流封禁",
-            header: <img src={bentoMedia} alt="Media" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoMedia} alt="Media" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "法律合规",
             description: "内置法规规则，自动识别漏洞歧义，降低纠纷概率",
-            header: <img src={bentoLegal} alt="Legal" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoLegal} alt="Legal" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "医疗质控",
             description: "匹配医保审核标准，校验文书规范，避免质控不合格",
-            header: <img src={bentoMedical} alt="Medical" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoMedical} alt="Medical" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "财务报销",
             description: "校验票据信息真实性，匹配报销规则，减少财务风险",
-            header: <img src={bentoFinance} alt="Finance" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoFinance} alt="Finance" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "招投标",
             description: "检查格式条款，自动识别废标风险，提高中标率",
-            header: <img src={bentoBidding} alt="Bidding" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoBidding} alt="Bidding" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "公函与通知",
             description: "审核行文规范、措辞严谨性，统一单位对外口径",
-            header: <img src={bentoOfficial} alt="Official" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoOfficial} alt="Official" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
     ];
 
@@ -103,8 +104,8 @@ export default function LandingPage() {
             <header className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-border">
                 <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
                     <div className="flex items-center space-x-2 font-bold text-xl text-primary">
-                        <BrainCircuitRegular className="w-8 h-8" />
-                        <span>文书审核专家</span>
+                        <img src={logo} alt="文书医生" className="w-8 h-8 object-contain" />
+                        <span>文书医生</span>
                     </div>
                     <div className="flex items-center space-x-4">
                         <button onClick={handleTryIt} className="px-5 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors shadow-sm hover:shadow-md">
@@ -154,6 +155,8 @@ export default function LandingPage() {
                         <img
                             src={heroIllustration}
                             alt="AI Document Review Dashboard"
+                            loading="eager"
+                            fetchPriority="high"
                             className="relative w-full h-auto drop-shadow-2xl rounded-2xl transform hover:scale-105 transition-transform duration-500"
                         />
                     </div>
@@ -222,7 +225,7 @@ export default function LandingPage() {
                             <div className="absolute -inset-4 bg-blue-100 blur-2xl rounded-full opacity-50"></div>
                             {/* General Capabilities Image */}
                             <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 flex items-center justify-center overflow-hidden shadow-lg hover:shadow-xl transition-shadow">
-                                <img src={capabilityGeneral} alt="General Capabilities" className="w-full h-full object-cover" />
+                                <img src={capabilityGeneral} alt="General Capabilities" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             </div>
                         </div>
                         <div className="order-1 lg:order-2 space-y-6">
@@ -276,7 +279,7 @@ export default function LandingPage() {
                             <div className="absolute -inset-4 bg-purple-100 blur-2xl rounded-full opacity-50"></div>
                             {/* Vertical Capabilities Image */}
                             <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 flex items-center justify-center overflow-hidden shadow-lg hover:shadow-xl transition-shadow">
-                                <img src={capabilityVertical} alt="Vertical Capabilities" className="w-full h-full object-cover" />
+                                <img src={capabilityVertical} alt="Vertical Capabilities" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             </div>
                         </div>
                     </div>
@@ -287,7 +290,7 @@ export default function LandingPage() {
                             <div className="absolute -inset-4 bg-cyan-100 blur-2xl rounded-full opacity-50"></div>
                             {/* Enterprise Capabilities Image */}
                             <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 flex items-center justify-center overflow-hidden shadow-lg hover:shadow-xl transition-shadow">
-                                <img src={capabilityEnterprise} alt="Enterprise Capabilities" className="w-full h-full object-cover" />
+                                <img src={capabilityEnterprise} alt="Enterprise Capabilities" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             </div>
                         </div>
                         <div className="order-1 lg:order-2 space-y-6">
@@ -379,7 +382,7 @@ export default function LandingPage() {
                                     </li>
                                 </ul>
                             </div>
-                            <button 
+                            <button
                                 onClick={() => window.open('https://yinyukeji.feishu.cn/share/base/form/shrcnAsdiND251wqNjeQgC5XnDc', '_blank')}
                                 className="w-full sm:w-auto px-10 py-4 bg-transparent border border-blue-400 text-blue-100 rounded-xl font-bold text-lg hover:bg-blue-900/30 hover:text-white transition-all"
                             >
@@ -395,7 +398,7 @@ export default function LandingPage() {
                             <a href="#" className="hover:text-slate-300 transition-colors">联系我们</a>
                         </div>
                         <div>
-                            &copy; {new Date().getFullYear()} 文书审核专家. All Rights Reserved.
+                            &copy; {new Date().getFullYear()} 文书医生. All Rights Reserved.
                         </div>
                     </div>
                 </div>
@@ -420,6 +423,8 @@ const TestimonialCard = ({ quote, author, role, avatar }: { quote: string, autho
             <img
                 src={avatar}
                 alt={author}
+                loading="lazy"
+                decoding="async"
                 className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm"
             />
             <div>
