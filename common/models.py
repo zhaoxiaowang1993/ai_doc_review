@@ -30,6 +30,37 @@ class RuleStatusEnum(str, Enum):
     inactive = 'inactive'
 
 
+# ========== Rule Type (适用/排除) ==========
+class RuleTypeEnum(str, Enum):
+    applicable = 'applicable'  # 适用规则
+    exclusion = 'exclusion'    # 排除规则
+
+
+# ========== Rule Source (内置/自定义) ==========
+class RuleSourceEnum(str, Enum):
+    builtin = 'builtin'   # 内置规则库
+    custom = 'custom'     # 自定义规则库
+
+
+# ========== Document Type ==========
+class DocumentType(BaseModel):
+    id: str
+    name: str  # 法律合同、医学文书、财务发票、媒体文案、投标文件
+
+
+# ========== Document Subtype ==========
+class DocumentSubtype(BaseModel):
+    id: str
+    type_id: str  # 关联到 DocumentType
+    name: str  # 劳动合同、租赁合同等
+
+
+# ========== Rule-Subtype Relation ==========
+class RuleSubtypeRelation(BaseModel):
+    rule_id: str
+    subtype_id: str
+
+
 # ========== Rule Example ==========
 class RuleExample(BaseModel):
     text: str
@@ -43,19 +74,25 @@ class ReviewRule(BaseModel):
     description: str
     risk_level: RiskLevel
     examples: list[RuleExample] = []
+    rule_type: RuleTypeEnum = RuleTypeEnum.applicable  # 规则类型：适用/排除
+    source: RuleSourceEnum = RuleSourceEnum.custom     # 规则来源：内置/自定义
     status: RuleStatusEnum = RuleStatusEnum.active
+    is_universal: bool = False
     created_at: str
     updated_at: Optional[str] = None
+    type_ids: list[str] = []
+    subtype_ids: list[str] = []
 
     class Config:
         use_enum_values = True
 
 
-# ========== Document Rule Association ==========
-class DocumentRuleAssociation(BaseModel):
-    doc_id: str
-    rule_id: str
-    enabled: bool = True
+# ========== Document (文书元数据) ==========
+class Document(BaseModel):
+    id: str
+    filename: str
+    subtype_id: str  # 关联到 DocumentSubtype，决定审核时加载哪些规则
+    created_at: str
 
 
 class SingleShotIssue(BaseModel):

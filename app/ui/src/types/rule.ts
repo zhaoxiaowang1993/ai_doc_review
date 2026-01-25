@@ -9,6 +9,16 @@ export enum RuleStatus {
   Inactive = 'inactive'
 }
 
+export enum RuleType {
+  Applicable = 'applicable',  // 适用规则
+  Exclusion = 'exclusion'     // 排除规则
+}
+
+export enum RuleSource {
+  Builtin = 'builtin',   // 内置规则库
+  Custom = 'custom'      // 自定义规则库
+}
+
 export interface RuleExample {
   text: string
   explanation: string
@@ -20,15 +30,23 @@ export interface ReviewRule {
   description: string
   risk_level: RiskLevel
   examples: RuleExample[]
+  rule_type: RuleType
+  source: RuleSource
   status: RuleStatus
+  is_universal: boolean
   created_at: string
   updated_at?: string
+  type_ids: string[]
+  subtype_ids: string[]
 }
 
-export interface DocumentRuleAssociation {
-  doc_id: string
-  rule_id: string
-  enabled: boolean
+// ========== Document (文书元数据) ==========
+
+export interface Document {
+  id: string
+  filename: string
+  subtype_id: string  // 关联到 DocumentSubtype，决定审核时加载哪些规则
+  created_at: string
 }
 
 export interface CreateRuleRequest {
@@ -36,6 +54,11 @@ export interface CreateRuleRequest {
   description: string
   risk_level: RiskLevel
   examples?: RuleExample[]
+  rule_type?: RuleType
+  source?: RuleSource
+  is_universal?: boolean
+  type_ids?: string[]
+  subtype_ids?: string[]
 }
 
 export interface UpdateRuleRequest {
@@ -43,5 +66,29 @@ export interface UpdateRuleRequest {
   description?: string
   risk_level?: RiskLevel
   examples?: RuleExample[]
+  rule_type?: RuleType
+  source?: RuleSource
   status?: RuleStatus
+  is_universal?: boolean
+  type_ids?: string[]
+  subtype_ids?: string[]
+}
+
+// ========== Document Types ==========
+
+export interface DocumentType {
+  id: string
+  name: string
+}
+
+export interface DocumentSubtype {
+  id: string
+  type_id: string
+  name: string
+}
+
+export interface DocumentTypeWithSubtypes {
+  id: string
+  name: string
+  subtypes: DocumentSubtype[]
 }

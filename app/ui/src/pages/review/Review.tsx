@@ -33,10 +33,11 @@ import { IssueDetailsPanel } from '../../components/IssueDetailsPanel'
 import { IssueListItem } from '../../components/IssueListItem'
 import { RulesPanel } from '../../components/RulesPanel'
 import { addAnnotation, deleteAnnotation, initAnnotations } from '../../services/annotations'
-import { streamApi } from '../../services/api'
+import { streamApi, getDocument, getDocumentTypes } from '../../services/api'
 import { getBlob } from '../../services/storage'
 import { APIEvent } from '../../types/api-events'
 import { Issue, IssueStatus } from '../../types/issue'
+import type { Document as DocMetadata, DocumentTypeWithSubtypes } from '../../types/rule'
 import { issueRiskLevel, issueRiskTone, issueStatusLabel, issueTypeDescription, issueTypeLabel, normalizeIssueStatus } from '../../i18n/labels'
 import { accentColors } from '../../theme'
 
@@ -366,6 +367,10 @@ function Review() {
   const [rulesExpanded, setRulesExpanded] = useState(false)
   const [typesExpanded, setTypesExpanded] = useState(false)
 
+  // 文档分类信息
+  const [documentSubtypeId, setDocumentSubtypeId] = useState<string>()
+  const [documentCategoryLabel, setDocumentCategoryLabel] = useState<string>()
+
   const abortControllerRef = useRef<AbortController>()
   const enabledRuleIdsRef = useRef<string[]>([])
   const pdfContainerRef = useRef<HTMLDivElement>(null)
@@ -547,6 +552,32 @@ function Review() {
     else setPdfLoadError('URL 中未指定文档')
   }, [searchParams])
 
+  // 加载文档元数据获取分类信息
+  useEffect(() => {
+    async function loadDocumentMetadata() {
+      if (!docId) return
+      try {
+        const docMeta = await getDocument(docId)
+        if (docMeta?.subtype_id) {
+          setDocumentSubtypeId(docMeta.subtype_id)
+          // 获取分类名称用于展示
+          const types = await getDocumentTypes()
+          for (const type of types) {
+            const subtype = type.subtypes.find(s => s.id === docMeta.subtype_id)
+            if (subtype) {
+              setDocumentCategoryLabel(`${type.name} / ${subtype.name}`)
+              break
+            }
+          }
+        }
+      } catch (e) {
+        // 文档可能没有分类信息（旧文档），静默处理
+        console.log('Document metadata not found:', e)
+      }
+    }
+    loadDocumentMetadata()
+  }, [docId])
+
   useEffect(() => {
     async function loadPdf(id: string) {
       setPdfLoadError(undefined)
@@ -598,6 +629,11 @@ function Review() {
             </Badge>
             <span className={classes.docName} title={docId ?? ''}>{docId ?? ''}</span>
           </div>
+          {documentCategoryLabel && (
+            <Badge appearance="tint" color="brand" shape="rounded" style={{ fontSize: '11px' }}>
+              {documentCategoryLabel}
+            </Badge>
+          )}
           <Input
             size="small"
             className={classes.searchInput}
@@ -775,7 +811,7 @@ function Review() {
               {rulesExpanded && (
                 <div className={classes.accordionContent}>
                   <RulesPanel
-                    docId={docId}
+                    subtypeId={documentSubtypeId}
                     enabledRuleIds={enabledRuleIds}
                     onEnabledRulesChange={setEnabledRuleIds}
                     onRulesCountChange={setTotalRulesCount}

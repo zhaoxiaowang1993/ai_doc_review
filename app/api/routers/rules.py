@@ -1,11 +1,14 @@
 from http import HTTPStatus
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from common.logger import get_logger
-from common.models import ReviewRule, DocumentRuleAssociation, RiskLevel, RuleExample
-from services.rules_service import RulesService
+from common.models import (
+    ReviewRule, RiskLevel, RuleExample,
+    RuleTypeEnum, RuleSourceEnum, DocumentType, DocumentSubtype
+)
+from services.rules_service import RulesService, RuleValidationError
 from dependencies import get_rules_service
 
 router = APIRouter()
@@ -19,6 +22,11 @@ class CreateRuleRequest(BaseModel):
     description: str
     risk_level: RiskLevel
     examples: Optional[List[RuleExample]] = None
+    rule_type: RuleTypeEnum = RuleTypeEnum.applicable
+    source: RuleSourceEnum = RuleSourceEnum.custom
+    is_universal: Optional[bool] = None
+    type_ids: Optional[List[str]] = None
+    subtype_ids: Optional[List[str]] = None
 
 
 class UpdateRuleRequest(BaseModel):
@@ -26,11 +34,24 @@ class UpdateRuleRequest(BaseModel):
     description: Optional[str] = None
     risk_level: Optional[RiskLevel] = None
     examples: Optional[List[RuleExample]] = None
+    rule_type: Optional[RuleTypeEnum] = None
+    source: Optional[RuleSourceEnum] = None
     status: Optional[str] = None
+    is_universal: Optional[bool] = None
+    type_ids: Optional[List[str]] = None
+    subtype_ids: Optional[List[str]] = None
 
 
-class SetDocumentRuleRequest(BaseModel):
-    enabled: bool
+class CreateSubtypeRequest(BaseModel):
+    id: str
+    type_id: str
+    name: str
+
+
+class DocumentTypeWithSubtypes(BaseModel):
+    id: str
+    name: str
+    subtypes: List[DocumentSubtype]
 
 
 # ========== Rules CRUD Endpoints ==========
@@ -66,12 +87,20 @@ async def create_rule(
 ) -> ReviewRule:
     """Create a new review rule."""
     logging.info(f"Creating rule: {body.name}")
-    return await rules_service.create_rule(
-        name=body.name,
-        description=body.description,
-        risk_level=body.risk_level,
-        examples=body.examples,
-    )
+    try:
+        return await rules_service.create_rule(
+            name=body.name,
+            description=body.description,
+            risk_level=body.risk_level,
+            examples=body.examples,
+            rule_type=body.rule_type,
+            source=body.source,
+            is_universal=body.is_universal,
+            type_ids=body.type_ids,
+            subtype_ids=body.subtype_ids,
+        )
+    except RuleValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get(
@@ -114,6 +143,8 @@ async def update_rule(
         if not fields:
             raise HTTPException(status_code=400, detail="No fields to update")
         return await rules_service.update_rule(rule_id, fields)
+    except RuleValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -138,42 +169,128 @@ async def delete_rule(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-# ========== Document-Rule Association Endpoints ==========
+# ========== Document Types Endpoints ==========
 
 @router.get(
-    "/api/v1/review/{doc_id}/rules",
-    summary="Get rule associations for a document",
-    response_model=List[DocumentRuleAssociation],
+    "/api/v1/document-types",
+    summary="Get all document types with their subtypes",
+    response_model=List[DocumentTypeWithSubtypes],
     responses={
-        HTTPStatus.OK: {"description": "Associations retrieved successfully"},
+        HTTPStatus.OK: {"description": "Document types retrieved successfully"},
     },
 )
-async def get_document_rules(
-    doc_id: str,
+async def get_document_types(
     rules_service: RulesService = Depends(get_rules_service),
-) -> List[DocumentRuleAssociation]:
-    """Get all rule associations for a document."""
-    logging.info(f"Retrieving rule associations for document {doc_id}")
-    return await rules_service.get_document_rules(doc_id)
+) -> List[DocumentTypeWithSubtypes]:
+    """Get all document types with their subtypes in a hierarchical structure."""
+    logging.info("Retrieving all document types with subtypes")
+    types = await rules_service.get_all_document_types()
+    result = []
+    for doc_type in types:
+        if doc_type.id == "type_universal":
+            continue
+        subtypes = await rules_service.get_subtypes_by_type(doc_type.id)
+        result.append(DocumentTypeWithSubtypes(
+            id=doc_type.id,
+            name=doc_type.name,
+            subtypes=subtypes
+        ))
+    return result
 
 
-@router.put(
-    "/api/v1/review/{doc_id}/rules/{rule_id}",
-    summary="Enable or disable a rule for a document",
+@router.get(
+    "/api/v1/document-types/{type_id}/subtypes",
+    summary="Get subtypes for a specific document type",
+    response_model=List[DocumentSubtype],
     responses={
-        HTTPStatus.OK: {"description": "Association updated successfully"},
-        HTTPStatus.NOT_FOUND: {"description": "Rule not found"},
+        HTTPStatus.OK: {"description": "Subtypes retrieved successfully"},
+        HTTPStatus.NOT_FOUND: {"description": "Document type not found"},
     },
 )
-async def set_document_rule(
-    doc_id: str,
-    rule_id: str,
-    body: SetDocumentRuleRequest,
+async def get_subtypes_by_type(
+    type_id: str,
+    rules_service: RulesService = Depends(get_rules_service),
+) -> List[DocumentSubtype]:
+    """Get all subtypes for a specific document type."""
+    doc_type = await rules_service.get_document_type(type_id)
+    if not doc_type:
+        raise HTTPException(status_code=404, detail=f"Document type {type_id} not found")
+    return await rules_service.get_subtypes_by_type(type_id)
+
+
+@router.post(
+    "/api/v1/document-subtypes",
+    summary="Create a new document subtype",
+    response_model=DocumentSubtype,
+    responses={
+        HTTPStatus.OK: {"description": "Subtype created successfully"},
+        HTTPStatus.BAD_REQUEST: {"description": "Invalid data provided"},
+    },
+)
+async def create_document_subtype(
+    body: CreateSubtypeRequest,
+    rules_service: RulesService = Depends(get_rules_service),
+) -> DocumentSubtype:
+    """Create a new document subtype."""
+    logging.info(f"Creating subtype: {body.name} under type {body.type_id}")
+    subtype = DocumentSubtype(id=body.id, type_id=body.type_id, name=body.name)
+    return await rules_service.create_document_subtype(subtype)
+
+
+@router.delete(
+    "/api/v1/document-subtypes/{subtype_id}",
+    summary="Delete a document subtype",
+    responses={
+        HTTPStatus.OK: {"description": "Subtype deleted successfully"},
+    },
+)
+async def delete_document_subtype(
+    subtype_id: str,
     rules_service: RulesService = Depends(get_rules_service),
 ) -> dict:
-    """Enable or disable a rule for a specific document."""
-    try:
-        await rules_service.set_document_rule(doc_id, rule_id, body.enabled)
-        return {"message": "Association updated", "doc_id": doc_id, "rule_id": rule_id, "enabled": body.enabled}
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    """Delete a document subtype."""
+    await rules_service.delete_document_subtype(subtype_id)
+    return {"message": "Subtype deleted", "subtype_id": subtype_id}
+
+
+# ========== Rules by Subtype Endpoints ==========
+
+@router.get(
+    "/api/v1/rules/by-subtype/{subtype_id}",
+    summary="Get rules associated with a document subtype",
+    response_model=List[ReviewRule],
+    responses={
+        HTTPStatus.OK: {"description": "Rules retrieved successfully"},
+    },
+)
+async def get_rules_by_subtype(
+    subtype_id: str,
+    include_universal: bool = Query(True, description="Include universal rules"),
+    rules_service: RulesService = Depends(get_rules_service),
+) -> List[ReviewRule]:
+    """Get all active rules associated with a specific document subtype."""
+    logging.info(f"Retrieving rules for subtype {subtype_id}")
+    return await rules_service.get_rules_by_subtype(subtype_id, include_universal)
+
+
+@router.get(
+    "/api/v1/rules/for-review/{subtype_id}",
+    summary="Get rules for document review (multi-level loading)",
+    response_model=List[ReviewRule],
+    responses={
+        HTTPStatus.OK: {"description": "Rules retrieved successfully"},
+    },
+)
+async def get_rules_for_review(
+    subtype_id: str,
+    rules_service: RulesService = Depends(get_rules_service),
+) -> List[ReviewRule]:
+    """
+    获取审核文书时需要加载的规则，支持多级继承：
+    1. 加载关联了当前子类的规则
+    2. 加载关联了当前子类所属父类的规则
+    3. 加载关联了 'universal' 的通用规则
+    """
+    logging.info(f"Getting rules for review with subtype {subtype_id}")
+    return await rules_service.get_rules_for_review(subtype_id)
+

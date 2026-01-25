@@ -236,8 +236,45 @@ echo -e "${CYAN}🎨 启动前端服务 (Vite)...${NC}"
 
 cd app/ui
 
+# 检查并清理端口 1230 的占用（避免 Vite 自动换端口导致前端地址与脚本输出不一致）
+FRONTEND_PORT=1230
+MAX_RETRIES=3
+RETRY_COUNT=0
+
+echo -e "${YELLOW}   检查端口 $FRONTEND_PORT 状态...${NC}"
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    OLD_PIDS=$(lsof -ti:$FRONTEND_PORT 2>/dev/null || echo "")
+    if [ -z "$OLD_PIDS" ]; then
+        echo -e "${GREEN}   ✅ 端口 $FRONTEND_PORT 可用${NC}"
+        break
+    fi
+
+    if [ $RETRY_COUNT -eq 0 ]; then
+        echo -e "${YELLOW}   ⚠️  端口 $FRONTEND_PORT 已被占用，正在清理...${NC}"
+    fi
+
+    for pid in $OLD_PIDS; do
+        if kill -0 $pid 2>/dev/null; then
+            kill $pid 2>/dev/null && echo -e "${GREEN}   ✅ 已停止进程 (PID: $pid)${NC}" || true
+        fi
+    done
+
+    pkill -9 -f "vite" 2>/dev/null || true
+    lsof -ti:$FRONTEND_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
+
+    sleep 2
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+done
+
+echo -e "${YELLOW}   最终验证端口状态...${NC}"
+FINAL_PIDS=$(lsof -ti:$FRONTEND_PORT 2>/dev/null || echo "")
+if [ -n "$FINAL_PIDS" ]; then
+    echo -e "${RED}   ❌ 无法释放端口 $FRONTEND_PORT，请先手动清理后重试${NC}"
+    exit 1
+fi
+
 # 在后台启动前端
-npm run dev &
+npm run dev -- --host 127.0.0.1 --port $FRONTEND_PORT --strictPort &
 FRONTEND_PID=$!
 
 echo -e "${GREEN}   ✅ 前端服务已启动 (PID: $FRONTEND_PID)${NC}"
@@ -288,4 +325,3 @@ trap 'echo ""; echo "🛑 正在停止服务..."; kill $BACKEND_PID 2>/dev/null;
 
 # 等待进程
 wait
-

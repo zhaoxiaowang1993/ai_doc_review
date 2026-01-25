@@ -10,6 +10,7 @@ import {
   SearchRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
+  BookRegular,
 } from '@fluentui/react-icons'
 import { PropsWithChildren } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
@@ -215,7 +216,8 @@ export function AppShell({ mode, onToggleMode, children }: AppShellProps) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const pageTitle = location.pathname === '/review' ? '智能审阅' : '文档库'
+  const pageTitle = location.pathname === '/review' ? '智能审阅' :
+    location.pathname === '/rules' ? '规则库' : '文档库'
 
   return (
     <div className={classes.shell}>
@@ -236,6 +238,7 @@ export function AppShell({ mode, onToggleMode, children }: AppShellProps) {
 
           <div className={classes.navSectionTitle}>工作台</div>
           <NavItem to="/files" label="文档库" icon={<DocumentBulletListRegular />} />
+          <NavItem to="/rules" label="规则库" icon={<BookRegular />} />
         </aside>
 
         <div className={classes.content}>

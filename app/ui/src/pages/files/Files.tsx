@@ -8,14 +8,12 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  DialogTrigger,
   Divider,
   makeStyles,
   mergeClasses,
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
-  ProgressBar,
   SkeletonItem,
   Text,
   tokens,
@@ -27,10 +25,11 @@ import {
   DocumentPdfRegular,
   FolderOpenRegular,
 } from '@fluentui/react-icons'
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import pdfIcon from '../../assets/pdf.svg'
-import { deleteBlob, listBlobs, uploadBlob, type LocalFileItem } from '../../services/storage'
+import { deleteBlob, listBlobs, type LocalFileItem } from '../../services/storage'
+import { UploadModal } from '../../components/UploadModal'
 
 const useStyles = makeStyles({
   page: { maxWidth: '1200px', margin: '0 auto' },
@@ -214,12 +213,10 @@ function Files() {
 
   const [fileList, setFileList] = useState<LocalFileItem[] | undefined>()
   const [error, setError] = useState<string | undefined>()
-  const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | undefined>()
   const [deleting, setDeleting] = useState(false)
-
-  const fileInput = useRef<HTMLInputElement | null>(null)
+  const [uploadModalOpen, setUploadModalOpen] = useState(false)
 
   const openDocument = useCallback(
     (filename: string) => navigate({ pathname: '/review', search: `?document=${filename}` }),
@@ -241,30 +238,7 @@ function Files() {
     loadFileList()
   }, [])
 
-  const triggerPick = () => fileInput.current?.click()
-
-  async function uploadFile(file: File) {
-    setError(undefined)
-    setUploading(true)
-    try {
-      await uploadBlob(file)
-      const files = await listBlobs()
-      setFileList(files)
-      openDocument(file.name)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const handleUploadFile = async (event: FormEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0]
-    if (!file) return
-    await uploadFile(file)
-  }
-
-  const refreshList = async () => {
+  async function refreshList() {
     try {
       const files = await listBlobs()
       setFileList(files)
@@ -300,7 +274,7 @@ function Files() {
           <Button appearance="secondary" icon={<FolderOpenRegular />} onClick={refreshList}>
             刷新
           </Button>
-          <Button appearance="primary" icon={<ArrowUploadRegular />} onClick={triggerPick}>
+          <Button appearance="primary" icon={<ArrowUploadRegular />} onClick={() => setUploadModalOpen(true)}>
             上传文档
           </Button>
         </div>
@@ -325,16 +299,16 @@ function Files() {
             setDragOver(true)
           }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={async (e) => {
+          onDrop={(e) => {
             e.preventDefault()
             setDragOver(false)
-            const file = e.dataTransfer.files?.[0]
-            if (file) await uploadFile(file)
+            // 打开 Modal，用户可以在 Modal 中再次拖拽或选择文件
+            setUploadModalOpen(true)
           }}
         >
           <div
             className={mergeClasses(classes.uploadCard, dragOver && classes.uploadCardActive)}
-            onClick={triggerPick}
+            onClick={() => setUploadModalOpen(true)}
             role="button"
             tabIndex={0}
           >
@@ -352,13 +326,6 @@ function Files() {
               </div>
             </div>
           </div>
-          <input
-            type="file"
-            onChange={handleUploadFile}
-            ref={fileInput}
-            style={{ display: 'none' }}
-            accept="application/pdf"
-          />
         </Card>
 
         <Card className={classes.panel}>
@@ -411,19 +378,6 @@ function Files() {
         </Card>
       </div>
 
-      <Dialog open={uploading}>
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>正在上传…</DialogTitle>
-            <DialogContent>
-              <ProgressBar />
-              <div style={{ marginTop: 10, color: tokens.colorNeutralForeground3, fontSize: 12 }}>
-                上传完成后将自动进入审核页面
-              </div>
-            </DialogContent>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
 
       <Dialog open={!!deleteTarget} onOpenChange={(_, data) => !data.open && setDeleteTarget(undefined)}>
         <DialogSurface>
@@ -445,6 +399,15 @@ function Files() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+
+      <UploadModal
+        open={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        onSuccess={(filename) => {
+          refreshList()
+          openDocument(filename)
+        }}
+      />
     </div>
   )
 }

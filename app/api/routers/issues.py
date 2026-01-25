@@ -2,11 +2,12 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
 from uuid import uuid4
-from dependencies import get_issues_service, get_rules_service
+from dependencies import get_documents_service, get_issues_service, get_rules_service
 from common.logger import get_logger
 import json
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from services.documents_service import DocumentsService
 from services.issues_service import IssuesService
 from services.rules_service import RulesService
 from fastapi.responses import StreamingResponse
@@ -59,6 +60,7 @@ async def get_pdf_issues(
     user=Depends(validate_authenticated),
     issues_service: IssuesService = Depends(get_issues_service),
     rules_service: RulesService = Depends(get_rules_service),
+    documents_service: DocumentsService = Depends(get_documents_service),
 ) -> StreamingResponse:
     """
     Retrieve issues related to the document.
@@ -75,12 +77,6 @@ async def get_pdf_issues(
     logging.info(f"Received initiate review request for document {doc_id}")
 
     try:
-        # Get custom rules if rule_ids provided
-        custom_rules = None
-        if rule_ids:
-            custom_rules = await rules_service.get_rules_by_ids(rule_ids)
-            logging.info(f"Using {len(custom_rules)} custom rules for review")
-
         stored_issues = await issues_service.get_issues_data(doc_id)
 
         # If force=true, delete existing issues and re-run
@@ -104,6 +100,18 @@ async def get_pdf_issues(
             pdf_path = Path(settings.local_docs_dir) / doc_id
             if not pdf_path.exists():
                 raise HTTPException(status_code=404, detail="Document not found on server")
+
+            custom_rules = None
+            if rule_ids:
+                custom_rules = await rules_service.get_rules_by_ids(rule_ids)
+                logging.info(f"Using {len(custom_rules)} custom rules for review")
+            else:
+                document = await documents_service.get_document(doc_id)
+                if not document or not document.subtype_id:
+                    raise HTTPException(status_code=400, detail="缺失文档分类信息，请重新上传并选择文书分类。")
+                custom_rules = await rules_service.get_rules_for_review(document.subtype_id)
+                logging.info(f"Loaded {len(custom_rules)} rules for review (subtype_id={document.subtype_id})")
+
             issues_stream = issues_service.initiate_review(str(pdf_path), user, date_time, custom_rules)
 
             async def issues_events():

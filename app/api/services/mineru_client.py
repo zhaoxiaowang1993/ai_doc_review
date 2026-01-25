@@ -247,7 +247,7 @@ class MinerUClient:
             for block in blocks:
                 if not isinstance(block, dict):
                     continue
-                text = (block.get("text") or block.get("content") or "").strip()
+                text = _extract_block_text(block)
                 if not text:
                     continue
                 bbox = block.get("bbox") or block.get("bounding_box") or block.get("box")
@@ -266,7 +266,7 @@ class MinerUClient:
 
         if not paragraphs and "paragraphs" in payload:
             for para in payload.get("paragraphs", []):
-                text = (para.get("text") or para.get("content") or "").strip()
+                text = _extract_block_text(para)
                 if not text:
                     continue
                 paragraphs.append(
@@ -299,12 +299,33 @@ def _fix_mojibake(text: str) -> str:
     return text
 
 
+def _extract_block_text(block: Dict[str, Any]) -> str:
+    """
+    Extract text content from various MinerU block types (text, table, list).
+    """
+    # 1. Try direct text/content
+    text = block.get("text") or block.get("content")
+    
+    # 2. If empty, check for table_body (HTML)
+    if not text and block.get("type") == "table":
+        text = block.get("table_body")
+        
+    # 3. If empty, check for list_items
+    if not text and block.get("type") == "list":
+        items = block.get("list_items")
+        if isinstance(items, list):
+            # Join list items with newlines
+            text = "\n".join([str(item) for item in items])
+            
+    return (text or "").strip()
+
+
 def _paragraphs_from_blocks_list(items: List[Any], *, meta: Dict[str, Any] | None) -> List[Dict[str, Any]]:
     paragraphs: List[Dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        text = item.get("text") or item.get("content") or ""
+        text = _extract_block_text(item)
         text = _fix_mojibake(str(text)).strip()
         if not text:
             continue

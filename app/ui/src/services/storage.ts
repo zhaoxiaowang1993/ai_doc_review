@@ -3,7 +3,18 @@ export interface LocalFileItem {
   lastModified?: Date
 }
 
-const apiOrigin = import.meta.env.VITE_API_ORIGIN ?? ''
+function normalizeApiOrigin(value: unknown): string {
+  if (!value || typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  try {
+    return new URL(trimmed).origin
+  } catch {
+    return trimmed.replace(/\/+$/, '')
+  }
+}
+
+const apiOrigin = normalizeApiOrigin(import.meta.env.VITE_API_ORIGIN)
 
 export async function getBlob(name: string): Promise<Blob> {
   const resp = await fetch(`${apiOrigin}/api/v1/files/${encodeURIComponent(name)}`)

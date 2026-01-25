@@ -1,0 +1,43 @@
+# document-category Specification
+
+## Purpose
+TBD - created by archiving change add-rule-library. Update Purpose after archive.
+## Requirements
+### Requirement: 文书类型定义
+系统中 SHALL 定义核心文书大类。
+#### Scenario: 初始内置类型
+- **Given** 管理员进入后台配置
+- **Then** 系统应预置：法律合同、医学文书、财务发票、媒体文案、投标文件
+- **And** 支持未来通过管理员接口扩展更多类型
+
+### Requirement: 文书子类关联
+每个文书大类 SHALL 可以细分多个子类。
+#### Scenario: 子类归属
+- **Given** 一个特定的文书类型（如“法律合同”）
+- **Then** 该类型下可包含“劳动合同”、“租赁合同”等子类
+- **And** 一个子类仅能关联到一个主类型
+
+### Requirement: 分类层级展示
+系统 SHALL 能以树形或级联结构输出文书分类。
+#### Scenario: 获取全量分类树
+- **When** 请求获取全量文书分类信息
+- **Then** 系统返回层级数据模型，包含类型与其下属子类的父子关系
+
+### Requirement: 上传文档时选择分类
+用户 SHALL 在上传文档后选择文书分类。
+
+#### Scenario: 上传后选择分类
+- **WHEN** 用户上传一份 PDF 文档
+- **THEN** 系统弹出 Ant Design 风格的模态框（Modal）
+- **AND** 用户在模态框中选择文件并指定文书分类（级联选择）
+- **AND** 用户确认后开始上传
+- **AND** 系统 SHALL 将分类信息持久化存储在 Document 对象中
+
+### Requirement: 审核页面展示分类标签
+系统 SHALL 在审核页面展示当前文档所属的分类。
+
+#### Scenario: 展示分类标签
+- **WHEN** 用户进入文档审核页面
+- **THEN** 页面顶部展示文档所属的分类标签（如：「法律合同 > 劳动合同」）
+- **AND** 此分类信息仅作展示，不可在详情页直接编辑
+

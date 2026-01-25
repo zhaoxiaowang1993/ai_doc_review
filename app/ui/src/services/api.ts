@@ -1,13 +1,30 @@
 import { EventSourceMessage, fetchEventSource } from '@microsoft/fetch-event-source'
 import { FatalError, RetriableError } from '../types/error'
-import type { ReviewRule, CreateRuleRequest, UpdateRuleRequest, DocumentRuleAssociation } from '../types/rule'
+import type {
+  ReviewRule, CreateRuleRequest, UpdateRuleRequest,
+  DocumentTypeWithSubtypes, Document
+} from '../types/rule'
 
-const apiOrigin = import.meta.env.VITE_API_ORIGIN ?? ''
+function normalizeApiOrigin(value: unknown): string {
+  if (!value || typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  try {
+    return new URL(trimmed).origin
+  } catch {
+    return trimmed.replace(/\/+$/, '')
+  }
+}
+
+const apiOrigin = normalizeApiOrigin(import.meta.env.VITE_API_ORIGIN)
 const apiBaseUrl = `${apiOrigin}/api/v1/review/`
 const rulesApiUrl = `${apiOrigin}/api/v1/rules`
+const filesApiUrl = `${apiOrigin}/api/v1/files`
+const documentsApiUrl = `${apiOrigin}/api/v1/documents`
+const documentTypesApiUrl = `${apiOrigin}/api/v1/document-types`
 const unknownError = '发生未知错误，请稍后重试。'
 
-class AbortedError extends Error {}
+class AbortedError extends Error { }
 
 async function getErrorMessage(response: Response): Promise<string> {
   let message = `接口错误（${response.statusText}）：`
@@ -158,8 +175,8 @@ export async function deleteRule(ruleId: string): Promise<void> {
   }
 }
 
-export async function getDocumentRules(docId: string): Promise<DocumentRuleAssociation[]> {
-  const response = await fetch(`${apiBaseUrl}${docId}/rules`, {
+export async function getRulesForReview(subtypeId: string): Promise<ReviewRule[]> {
+  const response = await fetch(`${rulesApiUrl}/for-review/${subtypeId}`, {
     headers: { 'Content-Type': 'application/json' },
     method: 'GET'
   })
@@ -170,14 +187,90 @@ export async function getDocumentRules(docId: string): Promise<DocumentRuleAssoc
   return response.json()
 }
 
-export async function setDocumentRule(docId: string, ruleId: string, enabled: boolean): Promise<void> {
-  const response = await fetch(`${apiBaseUrl}${docId}/rules/${ruleId}`, {
+// ========== Document Types API ==========
+
+export async function getDocumentTypes(): Promise<DocumentTypeWithSubtypes[]> {
+  const response = await fetch(documentTypesApiUrl, {
     headers: { 'Content-Type': 'application/json' },
-    method: 'PUT',
-    body: JSON.stringify({ enabled })
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function getRulesBySubtype(subtypeId: string, includeUniversal = true): Promise<ReviewRule[]> {
+  const url = `${rulesApiUrl}/by-subtype/${subtypeId}?include_universal=${includeUniversal}`
+  const response = await fetch(url, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+// ========== Documents API ==========
+
+export async function getDocument(docId: string): Promise<Document> {
+  const response = await fetch(`${documentsApiUrl}/${docId}`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export interface UploadFileResponse {
+  filename: string
+  doc_id: string | null
+  subtype_id: string | null
+}
+
+export async function uploadFile(file: File, subtypeId?: string): Promise<UploadFileResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (subtypeId) {
+    formData.append('subtype_id', subtypeId)
+  }
+
+  const response = await fetch(`${filesApiUrl}/upload`, {
+    method: 'POST',
+    body: formData
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function getFiles(): Promise<string[]> {
+  const response = await fetch(filesApiUrl, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function deleteFile(filename: string): Promise<void> {
+  const response = await fetch(`${filesApiUrl}/${filename}`, {
+    method: 'DELETE'
   })
   if (!response.ok) {
     const message = await getErrorMessage(response)
     throw new FatalError(message)
   }
 }
+

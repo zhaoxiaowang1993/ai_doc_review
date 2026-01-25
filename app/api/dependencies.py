@@ -2,10 +2,12 @@ import asyncio
 
 from services.issues_service import IssuesService
 from services.rules_service import RulesService
+from services.documents_service import DocumentsService
 from services.lc_pipeline import LangChainPipeline
 from database.db_client import SQLiteClient
 from database.issues_repository import IssuesRepository
 from database.rules_repository import RulesRepository
+from database.documents_repository import DocumentsRepository
 
 
 _issues_service: IssuesService | None = None
@@ -13,6 +15,9 @@ _issues_service_lock = asyncio.Lock()
 
 _rules_service: RulesService | None = None
 _rules_service_lock = asyncio.Lock()
+
+_documents_service: DocumentsService | None = None
+_documents_service_lock = asyncio.Lock()
 
 
 async def get_issues_service() -> IssuesService:
@@ -57,3 +62,24 @@ async def get_rules_service() -> RulesService:
         await repo.init()
         _rules_service = RulesService(repo)
         return _rules_service
+
+
+async def get_documents_service() -> DocumentsService:
+    """
+    Dependency that returns a singleton DocumentsService.
+    """
+    global _documents_service
+
+    if _documents_service is not None:
+        return _documents_service
+
+    async with _documents_service_lock:
+        if _documents_service is not None:
+            return _documents_service
+
+        db_client = SQLiteClient()
+        repo = DocumentsRepository(db_client)
+        await repo.init()
+        _documents_service = DocumentsService(repo)
+        return _documents_service
+

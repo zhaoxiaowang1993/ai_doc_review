@@ -1,0 +1,20 @@
+context: |
+  Product: AI Document Review for SMEs (Risk detection in Legal/Finance/Medical docs).
+  Tech Stack:
+  - Frontend: React 18, Vite, TS, Tailwind, AntD/Fluent (`app/ui`).
+  - Backend: FastAPI, Python, SQLite/Pydantic, Layered Arch (`app/api`).
+  - AI: DeepSeek 3.2, MinerU (PDF), LangChain, HITL flows.
+  
+  Key Constraints:
+  - Accuracy > Speed (Minutes latency ok).
+  - Portable deployment (SaaS/On-prem).
+  - No hard external SaaS dependencies.
+  
+  Conventions:
+  - Spec-Driven Development (Proposal -> Spec -> Code).
+  - Strict TS, Python Type Hints, Google Docstrings.
+
+rules:
+  openspec/specs/**/*.md:
+    - Use Gherkin syntax (Given/When/Then) for Scenarios.
+    - Use RFC 2119 keywords (SHALL, SHOULD) for Requirements.
