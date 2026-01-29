@@ -4,6 +4,8 @@ import Files from "./pages/files/Files";
 import Review from "./pages/review/Review";
 import RulesPage from "./pages/rules/RulesPage";
 import LandingPage from "./pages/landing/LandingPage";
+import PrivacyPolicyPage from './pages/legal/PrivacyPolicyPage'
+import TermsOfServicePage from './pages/legal/TermsOfServicePage'
 import type { ThemeMode } from './theme'
 
 type AppProps = {
@@ -15,6 +17,8 @@ function App({ mode, onToggleMode }: AppProps) {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/terms" element={<TermsOfServicePage />} />
       <Route
         path="/*"
         element={

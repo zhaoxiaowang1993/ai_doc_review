@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
     CheckmarkCircleRegular,
     BuildingRegular,
@@ -22,6 +22,16 @@ import bentoOfficial from '../../assets/landing/bento_official.png';
 import capabilityGeneral from '../../assets/landing/capability_general.png';
 import capabilityVertical from '../../assets/landing/capability_vertical.png';
 import capabilityEnterprise from '../../assets/landing/capability_enterprise.png';
+
+// Import avatar images
+import avatarBlogger from '../../assets/landing/avatar_blogger.png';
+import avatarLawyer from '../../assets/landing/avatar_lawyer.png';
+import avatarManager from '../../assets/landing/avatar_manager.png';
+import avatarDoctor from '../../assets/landing/avatar_doctor.png';
+import avatarFinance from '../../assets/landing/avatar_finance.png';
+import avatarForeigner from '../../assets/landing/avatar_foreigner.png';
+import avatarEcommerce from '../../assets/landing/avatar_ecommerce.png';
+import avatarConsultant from '../../assets/landing/avatar_consultant.png';
 
 
 export default function LandingPage() {
@@ -68,32 +78,32 @@ export default function LandingPage() {
         {
             title: "自媒体创作",
             description: "精准检测敏感词，发布前快速校验，防止平台限流封禁",
-            header: <img src={bentoMedia} alt="Media" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoMedia} alt="自媒体文案审核 - 敏感词检测防限流" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "法律合规",
             description: "内置法规规则，自动识别漏洞歧义，降低纠纷概率",
-            header: <img src={bentoLegal} alt="Legal" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoLegal} alt="法律合同审核 - AI识别合规漏洞" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "医疗质控",
             description: "匹配医保审核标准，校验文书规范，避免质控不合格",
-            header: <img src={bentoMedical} alt="Medical" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoMedical} alt="医疗文书审核 - 医保质控合规" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "财务报销",
             description: "校验票据信息真实性，匹配报销规则，减少财务风险",
-            header: <img src={bentoFinance} alt="Finance" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoFinance} alt="财务票据审核 - 报销规则匹配" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "招投标",
             description: "检查格式条款，自动识别废标风险，提高中标率",
-            header: <img src={bentoBidding} alt="Bidding" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoBidding} alt="招投标文件审核 - 废标风险识别" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
         {
             title: "公函与通知",
             description: "审核行文规范、措辞严谨性，统一单位对外口径",
-            header: <img src={bentoOfficial} alt="Official" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
+            header: <img src={bentoOfficial} alt="公函通知审核 - 行文规范检查" loading="lazy" decoding="async" className="w-full h-full object-cover group-hover/bento:scale-110 transition-transform duration-500" />,
         },
     ];
 
@@ -124,8 +134,8 @@ export default function LandingPage() {
                             AI 驱动的智能审核引擎
                         </div>
                         <h1 className="text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight text-slate-900">
-                            让 <span className="text-primary border-b-4 border-blue-200">{typewriterText}</span><br />
-                            无懈可击
+                            让 <span className="inline-block text-primary border-b-4 border-blue-200 pb-1">{typewriterText || '\u00A0'}</span>
+                            <span className="block mt-2">无懈可击</span>
                         </h1>
                         <p className="text-xl text-text-secondary max-w-lg leading-relaxed">
                             内置多行业规则，支持自定义审核标准。
@@ -225,7 +235,7 @@ export default function LandingPage() {
                             <div className="absolute -inset-4 bg-blue-100 blur-2xl rounded-full opacity-50"></div>
                             {/* General Capabilities Image */}
                             <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 flex items-center justify-center overflow-hidden shadow-lg hover:shadow-xl transition-shadow">
-                                <img src={capabilityGeneral} alt="General Capabilities" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                                <img src={capabilityGeneral} alt="通用基础能力 - 敏感词检测、语法校验、格式检查" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             </div>
                         </div>
                         <div className="order-1 lg:order-2 space-y-6">
@@ -279,7 +289,7 @@ export default function LandingPage() {
                             <div className="absolute -inset-4 bg-purple-100 blur-2xl rounded-full opacity-50"></div>
                             {/* Vertical Capabilities Image */}
                             <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 flex items-center justify-center overflow-hidden shadow-lg hover:shadow-xl transition-shadow">
-                                <img src={capabilityVertical} alt="Vertical Capabilities" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                                <img src={capabilityVertical} alt="垂直行业能力 - 合同、医疗、招投标、财务审核" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             </div>
                         </div>
                     </div>
@@ -290,7 +300,7 @@ export default function LandingPage() {
                             <div className="absolute -inset-4 bg-cyan-100 blur-2xl rounded-full opacity-50"></div>
                             {/* Enterprise Capabilities Image */}
                             <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 flex items-center justify-center overflow-hidden shadow-lg hover:shadow-xl transition-shadow">
-                                <img src={capabilityEnterprise} alt="Enterprise Capabilities" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                                <img src={capabilityEnterprise} alt="企业级进阶能力 - 批量审核、多角色权限、报告导出" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             </div>
                         </div>
                         <div className="order-1 lg:order-2 space-y-6">
@@ -393,12 +403,15 @@ export default function LandingPage() {
 
                     <div className="mt-20 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-base text-slate-500">
                         <div className="flex gap-6">
-                            <a href="#" className="hover:text-slate-300 transition-colors">隐私条款</a>
-                            <a href="#" className="hover:text-slate-300 transition-colors">服务条款</a>
-                            <a href="#" className="hover:text-slate-300 transition-colors">联系我们</a>
+                            <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-slate-300 transition-colors">隐私政策</Link>
+                            <Link to="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-slate-300 transition-colors">用户协议</Link>
+                            <Link to="/terms" className="hover:text-slate-300 transition-colors">联系我们</Link>
                         </div>
-                        <div>
-                            &copy; {new Date().getFullYear()} 文书医生. All Rights Reserved.
+                        <div className="whitespace-nowrap">
+                            Copyright © 2025 北京音语科技有限公司{' '}
+                            <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer" className="hover:text-slate-300 transition-colors">
+                                京ICP备2024078221号-4
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -440,48 +453,48 @@ const testimonials = [
         quote: "以前手动查敏感词要半小时，现在一键搞定，再也没被限流！",
         author: "林小姐",
         role: "小红书博主",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A+stylish+young+Chinese+woman+social+media+influencer+style+portrait+square+hd&image_size=square"
+        avatar: avatarBlogger
     },
     {
         quote: "AI 帮我揪出很多合同漏洞，客户都说我专业度高了。",
         author: "王律师",
         role: "某律所合伙人",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A+professional+Chinese+lawyer+in+a+suit+confident+office+background+square+hd&image_size=square"
+        avatar: avatarLawyer
     },
     {
         quote: "标书审核快了60%，废标率降80%，中标金额翻一番。",
         author: "张经理",
         role: "某建筑公司 商务经理",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A+middle-aged+Chinese+businessman+construction+industry+manager+professional+square+hd&image_size=square"
+        avatar: avatarManager
     },
     {
         quote: "文书合规率从75%升到98%，医保罚款直接清零。",
         author: "李主任",
         role: "某三甲医院 质控科",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A+Chinese+doctor+in+a+white+coat+hospital+setting+professional+square+hd&image_size=square"
+        avatar: avatarDoctor
     },
     {
         quote: "财务报销审核效率提升了3倍，再也不用加班对票据了。",
         author: "刘经理",
         role: "某科技公司 财务",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A+professional+Chinese+woman+office+setting+financial+manager+square+hd&image_size=square"
+        avatar: avatarFinance
     },
     {
         quote: "对于我们这种跨国业务，多语言合同审核简直是救星。",
         author: "Michael",
         role: "某外贸企业 法务总监",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A+Western+professional+man+business+suit+corporate+background+square+hd&image_size=square"
+        avatar: avatarForeigner
     },
     {
         quote: "原来总是担心广告法违规，现在发布前扫一下，安心多了。",
         author: "赵总",
         role: "某电商公司 运营部门负责人",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=A+energetic+Chinese+entrepreneur+e-commerce+office+setting+square+hd&image_size=square"
+        avatar: avatarEcommerce
     },
     {
         quote: "招标文件里的坑都被识别出来了，避免了巨大的经济损失。",
         author: "孙顾问",
         role: "某工程咨询公司",
-        avatar: "https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=An+experienced+Chinese+consultant+professional+and+trustworthy+square+hd&image_size=square"
+        avatar: avatarConsultant
     }
 ];
