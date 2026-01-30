@@ -18,9 +18,9 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from middleware.logging import LoggingMiddleware
 from config.config import settings
-from fastapi.staticfiles import StaticFiles
 from middleware.logging import LoggingMiddleware, setup_logging
 from routers import issues, files, rules
+from spa_staticfiles import SPAStaticFiles
 
 
 # Set up logging configuration
@@ -66,9 +66,9 @@ def health_check():
 
 # Mount the UI at the root path (should come last so it doesn't interfere with /api routes)
 if settings.serve_static:
-    static_dir = Path("www")
+    static_dir = API_DIR / "www"
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=static_dir, html=True))
+        app.mount("/", SPAStaticFiles(directory=static_dir, html=True))
     else:
         logging.warning("Static directory 'www' not found. Set SERVE_STATIC=False or build UI into app/api/www.")
 
