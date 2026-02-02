@@ -1,6 +1,4 @@
-import { BrandVariants, Theme, createDarkTheme, createLightTheme } from '@fluentui/react-components'
-
-export type ThemeMode = 'dark' | 'light'
+import { BrandVariants, Theme, createLightTheme } from '@fluentui/react-components'
 
 // 专业科技感配色：靛蓝为主色调
 const brand: BrandVariants = {
@@ -33,31 +31,10 @@ export const accentColors = {
   warning: '#f59e0b',
   danger: '#ef4444',
   info: '#06b6d4',
-  // 深色模式专用
-  dark: {
-    bg: '#0f172a',
-    bgElevated: '#1e293b',
-    bgCard: 'rgba(30, 41, 59, 0.8)',
-    border: 'rgba(148, 163, 184, 0.15)',
-    borderHover: 'rgba(148, 163, 184, 0.3)',
-    text: '#f1f5f9',
-    textMuted: '#94a3b8',
-  },
-  // 浅色模式专用
-  light: {
-    bg: '#f8fafc',
-    bgElevated: '#ffffff',
-    bgCard: 'rgba(255, 255, 255, 0.9)',
-    border: 'rgba(15, 23, 42, 0.1)',
-    borderHover: 'rgba(15, 23, 42, 0.2)',
-    text: '#0f172a',
-    textMuted: '#64748b',
-  },
 }
 
-export function getAppTheme(mode: ThemeMode): Theme {
-  const base = mode === 'dark' ? createDarkTheme(brand) : createLightTheme(brand)
-
+export function getAppTheme(): Theme {
+  const base = createLightTheme(brand)
   return {
     ...base,
     fontFamilyBase:

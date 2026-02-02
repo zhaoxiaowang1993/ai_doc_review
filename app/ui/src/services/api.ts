@@ -2,7 +2,7 @@ import { EventSourceMessage, fetchEventSource } from '@microsoft/fetch-event-sou
 import { FatalError, RetriableError } from '../types/error'
 import type {
   ReviewRule, CreateRuleRequest, UpdateRuleRequest,
-  DocumentTypeWithSubtypes, Document
+  DocumentTypeWithSubtypes, Document, ReviewRulesState
 } from '../types/rule'
 
 function normalizeApiOrigin(value: unknown): string {
@@ -177,6 +177,18 @@ export async function deleteRule(ruleId: string): Promise<void> {
 
 export async function getRulesForReview(subtypeId: string): Promise<ReviewRule[]> {
   const response = await fetch(`${rulesApiUrl}/for-review/${subtypeId}`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function getReviewRulesState(docId: string): Promise<ReviewRulesState> {
+  const response = await fetch(`${apiBaseUrl}${encodeURIComponent(docId)}/rules-state`, {
     headers: { 'Content-Type': 'application/json' },
     method: 'GET'
   })

@@ -1,26 +1,20 @@
 import {
   Button,
-  Input,
   makeStyles,
   mergeClasses,
   tokens,
 } from '@fluentui/react-components'
 import {
   DocumentBulletListRegular,
-  SearchRegular,
-  WeatherMoonRegular,
-  WeatherSunnyRegular,
   BookRegular,
+  PanelLeftContractRegular,
+  PanelLeftExpandRegular,
 } from '@fluentui/react-icons'
-import { PropsWithChildren } from 'react'
+import { PropsWithChildren, useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import logo from '../assets/landing/logo.svg'
-import type { ThemeMode } from '../theme'
 
-type AppShellProps = PropsWithChildren<{
-  mode: ThemeMode
-  onToggleMode: () => void
-}>
+type AppShellProps = PropsWithChildren<{}>
 
 const useStyles = makeStyles({
   shell: {
@@ -29,7 +23,6 @@ const useStyles = makeStyles({
   },
   layout: {
     display: 'grid',
-    gridTemplateColumns: '260px 1fr',
     minHeight: '100vh',
   },
   // ========== SIDEBAR ==========
@@ -38,6 +31,13 @@ const useStyles = makeStyles({
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
     backdropFilter: 'blur(12px)',
     backgroundColor: tokens.colorNeutralBackground2,
+    transitionProperty: 'padding',
+    transitionDuration: '150ms',
+  },
+  navCollapsed: {
+    padding: '20px 8px',
+    backgroundColor: tokens.colorNeutralBackground1,
+    backdropFilter: 'none',
   },
   // ========== BRAND ==========
   brand: {
@@ -49,6 +49,16 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorBrandBackground2,
     border: `1px solid ${tokens.colorBrandStroke2}`,
     marginBottom: '20px',
+    transitionProperty: 'padding',
+    transitionDuration: '150ms',
+  },
+  brandCollapsed: {
+    padding: 0,
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    border: 'none',
+    borderRadius: 0,
+    marginBottom: '12px',
   },
   brandIcon: {
     width: '40px',
@@ -57,7 +67,6 @@ const useStyles = makeStyles({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: '10px',
-    backgroundColor: tokens.colorBrandBackground,
     color: tokens.colorNeutralForegroundOnBrand,
     fontSize: '20px',
   },
@@ -65,6 +74,9 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: '2px',
+  },
+  brandInfoCollapsed: {
+    display: 'none',
   },
   statusRow: {
     display: 'flex',
@@ -96,6 +108,9 @@ const useStyles = makeStyles({
     textTransform: 'uppercase',
     margin: '16px 12px 8px',
   },
+  navSectionTitleCollapsed: {
+    display: 'none',
+  },
   navItem: {
     display: 'flex',
     alignItems: 'center',
@@ -105,12 +120,17 @@ const useStyles = makeStyles({
     textDecoration: 'none',
     color: tokens.colorNeutralForeground2,
     border: '1px solid transparent',
+    position: 'relative',
     transitionProperty: 'all',
     transitionDuration: '150ms',
     '&:hover': {
       backgroundColor: tokens.colorSubtleBackgroundHover,
       color: tokens.colorNeutralForeground1,
     },
+  },
+  navItemCollapsed: {
+    justifyContent: 'center',
+    padding: '10px 8px',
   },
   navItemActive: {
     backgroundColor: tokens.colorBrandBackground2,
@@ -135,6 +155,9 @@ const useStyles = makeStyles({
   navItemIcon: {
     color: tokens.colorBrandForeground1,
     fontSize: '18px',
+  },
+  navItemLabelCollapsed: {
+    display: 'none',
   },
   // ========== CONTENT ==========
   content: {
@@ -169,15 +192,16 @@ const useStyles = makeStyles({
     fontSize: '12px',
     color: tokens.colorNeutralForeground3,
   },
-  // ========== ACTIONS ==========
-  actions: {
-    display: 'flex',
-    gap: '10px',
-    alignItems: 'center',
-  },
-  search: {
-    width: '280px',
-    maxWidth: '30vw',
+  breadcrumbLink: {
+    minWidth: 'auto',
+    paddingLeft: 0,
+    paddingRight: 0,
+    fontSize: '12px',
+    color: tokens.colorNeutralForeground3,
+    '&:hover': {
+      color: tokens.colorNeutralForeground2,
+      textDecorationLine: 'underline',
+    },
   },
   // ========== PAGE ==========
   page: {
@@ -191,43 +215,85 @@ function NavItem({
   to,
   label,
   icon,
+  collapsed,
 }: {
   to: string
   label: string
   icon: React.ReactNode
+  collapsed: boolean
 }) {
   const classes = useStyles()
   return (
     <NavLink
       to={to}
       className={({ isActive }) =>
-        mergeClasses(classes.navItem, isActive && classes.navItemActive)
+        mergeClasses(
+          classes.navItem,
+          collapsed && classes.navItemCollapsed,
+          isActive && classes.navItemActive,
+        )
       }
-      style={{ position: 'relative' }}
+      aria-label={label}
     >
       <span className={classes.navItemIcon}>{icon}</span>
-      <span>{label}</span>
+      <span className={collapsed ? classes.navItemLabelCollapsed : undefined}>{label}</span>
     </NavLink>
   )
 }
 
-export function AppShell({ mode, onToggleMode, children }: AppShellProps) {
+export function AppShell({ children }: AppShellProps) {
   const classes = useStyles()
   const location = useLocation()
   const navigate = useNavigate()
 
-  const pageTitle = location.pathname === '/review' ? '智能审阅' :
-    location.pathname === '/rules' ? '规则库' : '文档库'
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    const raw = localStorage.getItem('sidebarCollapsed')
+    return raw === '1'
+  })
+
+  useEffect(() => {
+    localStorage.setItem('sidebarCollapsed', sidebarCollapsed ? '1' : '0')
+  }, [sidebarCollapsed])
+
+  const pageTitle = useMemo(() => {
+    if (location.pathname === '/rules') return '规则库'
+    return '文档库'
+  }, [location.pathname])
+
+  const reviewDocTitle = useMemo(() => {
+    if (location.pathname !== '/review') return undefined
+    const raw = new URLSearchParams(location.search).get('document') ?? undefined
+    if (!raw) return '未命名文书'
+    return raw.replace(/\.pdf$/i, '')
+  }, [location.pathname, location.search])
 
   return (
     <div className={classes.shell}>
-      <div className={classes.layout}>
-        <aside className={classes.nav}>
-          <div className={classes.brand}>
+      <div
+        className={classes.layout}
+        style={{
+          gridTemplateColumns: sidebarCollapsed ? '64px 1fr' : '260px 1fr',
+          transition: 'grid-template-columns 150ms ease',
+        }}
+      >
+        <aside
+          className={mergeClasses(classes.nav, sidebarCollapsed && classes.navCollapsed)}
+        >
+          <div
+            className={mergeClasses(
+              classes.brand,
+              sidebarCollapsed && classes.brandCollapsed,
+            )}
+          >
             <div className={classes.brandIcon}>
               <img src={logo} alt="Logo" style={{ width: '100%', height: '100%' }} />
             </div>
-            <div className={classes.brandInfo}>
+            <div
+              className={mergeClasses(
+                classes.brandInfo,
+                sidebarCollapsed && classes.brandInfoCollapsed,
+              )}
+            >
               <div className={classes.statusRow}>
                 <span className={classes.statusDot} />
                 <span className={classes.brandTitle}>AI 文档审核</span>
@@ -236,47 +302,58 @@ export function AppShell({ mode, onToggleMode, children }: AppShellProps) {
             </div>
           </div>
 
-          <div className={classes.navSectionTitle}>工作台</div>
-          <NavItem to="/files" label="文档库" icon={<DocumentBulletListRegular />} />
-          <NavItem to="/rules" label="规则库" icon={<BookRegular />} />
+          <div
+            className={mergeClasses(
+              classes.navSectionTitle,
+              sidebarCollapsed && classes.navSectionTitleCollapsed,
+            )}
+          >
+            工作台
+          </div>
+          <NavItem
+            to="/files"
+            label="文档库"
+            icon={<DocumentBulletListRegular />}
+            collapsed={sidebarCollapsed}
+          />
+          <NavItem
+            to="/rules"
+            label="规则库"
+            icon={<BookRegular />}
+            collapsed={sidebarCollapsed}
+          />
         </aside>
 
         <div className={classes.content}>
           <header className={classes.topbar}>
             <div className={classes.titleSection}>
-              {location.pathname !== '/files' && (
-                <Button
-                  appearance="subtle"
-                  size="small"
-                  className={classes.backButton}
-                  onClick={() => navigate(-1)}
-                >
-                  ← 返回
-                </Button>
-              )}
-              <span className={classes.pageTitle}>{pageTitle}</span>
-              <span className={classes.breadcrumbs}>/ 合规审阅中心</span>
-            </div>
-            <div className={classes.actions}>
-              <Input
-                className={classes.search}
+              <Button
+                appearance="subtle"
                 size="small"
-                contentBefore={<SearchRegular />}
-                placeholder="搜索文档、问题…"
+                className={classes.backButton}
+                onClick={() => setSidebarCollapsed((v) => !v)}
+                aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                icon={sidebarCollapsed ? <PanelLeftExpandRegular /> : <PanelLeftContractRegular />}
               />
-              <Button appearance="subtle" size="small" onClick={onToggleMode}>
-                {mode === 'dark' ? (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <WeatherSunnyRegular />
-                    浅色
-                  </span>
-                ) : (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <WeatherMoonRegular />
-                    深色
-                  </span>
-                )}
-              </Button>
+              {location.pathname === '/review' ? (
+                <>
+                  <Button
+                    appearance="transparent"
+                    size="small"
+                    className={classes.breadcrumbLink}
+                    onClick={() => navigate('/files')}
+                  >
+                    文档库
+                  </Button>
+                  <span className={classes.breadcrumbs}>/</span>
+                  <span className={classes.pageTitle}>{reviewDocTitle}</span>
+                </>
+              ) : (
+                <>
+                  <span className={classes.pageTitle}>{pageTitle}</span>
+                  <span className={classes.breadcrumbs}>/ 合规审阅中心</span>
+                </>
+              )}
             </div>
           </header>
           <main className={classes.page}>{children}</main>

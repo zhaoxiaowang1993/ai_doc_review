@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS rule_type_relations (
 );
 """
 
+CREATE_REVIEW_RULE_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS review_rule_snapshots (
+    doc_id TEXT PRIMARY KEY,
+    reviewed_at_UTC TEXT NOT NULL,
+    subtype_id TEXT,
+    rules_snapshot TEXT NOT NULL,
+    rules_fingerprint TEXT NOT NULL
+);
+"""
+
 
 class SQLiteClient:
     def __init__(self, db_path: str | None = None) -> None:
@@ -115,6 +125,7 @@ class SQLiteClient:
             await db.execute(CREATE_DOCUMENT_SUBTYPES_TABLE)
             await db.execute(CREATE_RULE_SUBTYPE_RELATIONS_TABLE)
             await db.execute(CREATE_RULE_TYPE_RELATIONS_TABLE)
+            await db.execute(CREATE_REVIEW_RULE_SNAPSHOTS_TABLE)
             await db.commit()
             
             # Migration: Add risk_level column to existing issues table if not exists

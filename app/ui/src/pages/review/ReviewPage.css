@@ -1,0 +1,393 @@
+.review-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 340px;
+  gap: 16px;
+  height: calc(100vh - 120px);
+  overflow: hidden;
+}
+
+.review-panel {
+  height: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(5, 5, 5, 0.12);
+  background: #fff;
+}
+
+.review-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.review-left-header {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(5, 5, 5, 0.12);
+}
+
+.review-count-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.review-doc-name {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+.review-filter-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.review-type-filter {
+  width: 100%;
+}
+
+.review-left-list {
+  padding: 8px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+.review-issue-item {
+  cursor: pointer;
+  padding: 12px 12px 10px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(5, 5, 5, 0.12);
+  background: rgba(0, 0, 0, 0.02);
+  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 200ms cubic-bezier(0.4, 0, 0.2, 1), background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.review-issue-item:hover {
+  border-color: rgba(5, 5, 5, 0.2);
+  background: rgba(0, 0, 0, 0.04);
+  transform: translateX(4px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+.review-issue-item-selected {
+  border-color: rgba(22, 119, 255, 0.7);
+  background: rgba(22, 119, 255, 0.06);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+.review-issue-item-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: rgb(22, 119, 255);
+}
+
+.review-issue-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: rgba(0, 0, 0, 0.88);
+  margin-bottom: 10px;
+}
+
+.review-issue-title-dismissed {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+
+.review-issue-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.review-issue-page {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(5, 5, 5, 0.12);
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.65);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.review-issue-status {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.review-analyze-status {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+}
+
+.review-empty {
+  color: rgba(0, 0, 0, 0.45);
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.review-center {
+  display: flex;
+  flex-direction: column;
+}
+
+.review-toolbar {
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(5, 5, 5, 0.12);
+}
+
+.review-toolbar-section {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.review-page-info {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  min-width: 60px;
+  text-align: center;
+}
+
+.review-zoom-info {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  min-width: 48px;
+  text-align: center;
+}
+
+.review-pdf-compare-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  flex-grow: 1;
+  overflow: hidden;
+  background: rgba(5, 5, 5, 0.12);
+}
+
+.review-pdf-compare-single {
+  grid-template-columns: 1fr;
+}
+
+.review-pdf-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.review-pdf-pane-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid rgba(5, 5, 5, 0.12);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.review-pdf-wrap {
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  flex-grow: 1;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.review-pdf-card {
+  padding: 0;
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.1);
+}
+
+.review-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.review-right-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.review-overview-card {
+  border-radius: 10px;
+  border: 1px solid rgba(5, 5, 5, 0.12);
+  background: #fff;
+  overflow: hidden;
+}
+
+.review-overview-header {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  border-bottom: 1px solid rgba(5, 5, 5, 0.12);
+}
+
+.review-overview-grid {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  align-items: stretch;
+}
+
+.review-metric-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(5, 5, 5, 0.12);
+}
+
+.review-metric-label {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+}
+
+.review-metric-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.review-accordion {
+  border-radius: 10px;
+  border: 1px solid rgba(5, 5, 5, 0.12);
+  background: #fff;
+  overflow: hidden;
+}
+
+.review-accordion-item:not(:last-child) {
+  border-bottom: 1px solid rgba(5, 5, 5, 0.12);
+}
+
+.review-accordion-header {
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  background: transparent;
+  transition: background-color 150ms;
+}
+
+.review-accordion-header:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.review-accordion-icon {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.45);
+  transition: transform 200ms;
+}
+
+.review-accordion-icon-open {
+  transform: rotate(180deg);
+}
+
+.review-accordion-content {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.review-type-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.review-type-card {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: background-color 150ms;
+  border-bottom: 1px solid rgba(5, 5, 5, 0.12);
+}
+
+.review-type-card:last-child {
+  border-bottom: none;
+}
+
+.review-type-card:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.review-type-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.review-type-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.review-type-desc {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.45);
+  line-height: 1.4;
+}
+
+.review-type-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}

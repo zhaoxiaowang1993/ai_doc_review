@@ -6,14 +6,8 @@ import RulesPage from "./pages/rules/RulesPage";
 import LandingPage from "./pages/landing/LandingPage";
 import PrivacyPolicyPage from './pages/legal/PrivacyPolicyPage'
 import TermsOfServicePage from './pages/legal/TermsOfServicePage'
-import type { ThemeMode } from './theme'
 
-type AppProps = {
-  mode: ThemeMode
-  onToggleMode: () => void
-}
-
-function App({ mode, onToggleMode }: AppProps) {
+function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
@@ -22,7 +16,7 @@ function App({ mode, onToggleMode }: AppProps) {
       <Route
         path="/*"
         element={
-          <AppShell mode={mode} onToggleMode={onToggleMode}>
+          <AppShell>
             <AuthorizedPages />
           </AppShell>
         }

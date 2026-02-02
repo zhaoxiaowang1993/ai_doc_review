@@ -40,6 +40,20 @@ export interface ReviewRule {
   subtype_ids: string[]
 }
 
+export interface ReviewRuleSnapshotItem {
+  id: string
+  name: string
+  description: string
+  risk_level: RiskLevel
+}
+
+export interface ReviewRulesState {
+  snapshot_rules: ReviewRuleSnapshotItem[]
+  snapshot_reviewed_at_UTC: string | null
+  latest_rule_ids: string[]
+  rules_changed_since_review: boolean
+}
+
 // ========== Document (文书元数据) ==========
 
 export interface Document {

@@ -20,25 +20,25 @@
 
 /* Bento Grid Placeholders */
 .bento-placeholder-media {
-  @apply bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20;
+  @apply bg-gradient-to-br from-blue-50 to-indigo-50;
 }
 
 .bento-placeholder-legal {
-  @apply bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20;
+  @apply bg-gradient-to-br from-indigo-50 to-purple-50;
 }
 
 .bento-placeholder-medical {
-  @apply bg-gradient-to-br from-teal-50 to-emerald-50 dark:from-teal-900/20 dark:to-emerald-900/20;
+  @apply bg-gradient-to-br from-teal-50 to-emerald-50;
 }
 
 .bento-placeholder-finance {
-  @apply bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20;
+  @apply bg-gradient-to-br from-orange-50 to-amber-50;
 }
 
 .bento-placeholder-bidding {
-  @apply bg-gradient-to-br from-rose-50 to-pink-50 dark:from-rose-900/20 dark:to-pink-900/20;
+  @apply bg-gradient-to-br from-rose-50 to-pink-50;
 }
 
 .bento-placeholder-official {
-  @apply bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-800/20 dark:to-gray-800/20;
+  @apply bg-gradient-to-br from-slate-50 to-gray-50;
 }

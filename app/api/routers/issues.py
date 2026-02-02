@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
 from uuid import uuid4
-from dependencies import get_documents_service, get_issues_service, get_rules_service
+from dependencies import get_documents_service, get_issues_service, get_rules_service, get_review_rule_snapshots_repository
 from common.logger import get_logger
 import json
 from typing import Any, Dict, List, Literal, Optional
@@ -15,6 +15,9 @@ from security.auth import validate_authenticated
 from common.models import Issue, ModifiedFieldsModel, DismissalFeedbackModel, IssueStatusEnum
 from config.config import settings
 from pydantic import BaseModel
+from database.review_rule_snapshots_repository import ReviewRuleSnapshotsRepository
+from services.rules_fingerprint import build_review_rules_snapshot_items, compute_review_rules_fingerprint
+from common.models import RiskLevel
 
 
 router = APIRouter()
@@ -44,6 +47,62 @@ class HitlResumeRequest(BaseModel):
     interrupt_id: Optional[str] = None
     decision: Dict[str, Any]
 
+class ReviewRuleSnapshotItem(BaseModel):
+    id: str
+    name: str
+    description: str
+    risk_level: RiskLevel
+
+
+class ReviewRulesStateResponse(BaseModel):
+    snapshot_rules: List[ReviewRuleSnapshotItem]
+    snapshot_reviewed_at_UTC: Optional[str] = None
+    latest_rule_ids: List[str]
+    rules_changed_since_review: bool
+
+
+@router.get(
+    "/api/v1/review/{doc_id}/rules-state",
+    summary="Get review-time rules snapshot and latest rule change state",
+    response_model=ReviewRulesStateResponse,
+)
+async def get_review_rules_state(
+    doc_id: str,
+    user=Depends(validate_authenticated),
+    rules_service: RulesService = Depends(get_rules_service),
+    documents_service: DocumentsService = Depends(get_documents_service),
+    review_rule_snapshots_repository: ReviewRuleSnapshotsRepository = Depends(get_review_rule_snapshots_repository),
+) -> ReviewRulesStateResponse:
+    document = await documents_service.get_document(doc_id)
+    subtype_id = document.subtype_id if document else None
+
+    latest_rules = await rules_service.get_rules_for_review(subtype_id) if subtype_id else []
+    latest_rule_ids = [r.id for r in latest_rules]
+    latest_fingerprint = compute_review_rules_fingerprint(latest_rules)
+
+    snapshot_row = await review_rule_snapshots_repository.get_by_doc_id(doc_id)
+    if not snapshot_row:
+        return ReviewRulesStateResponse(
+            snapshot_rules=build_review_rules_snapshot_items(latest_rules),
+            snapshot_reviewed_at_UTC=None,
+            latest_rule_ids=latest_rule_ids,
+            rules_changed_since_review=False,
+        )
+
+    try:
+        snapshot_rules = json.loads(snapshot_row.get("rules_snapshot") or "[]")
+    except Exception:
+        snapshot_rules = []
+
+    snapshot_fingerprint = snapshot_row.get("rules_fingerprint") or ""
+
+    return ReviewRulesStateResponse(
+        snapshot_rules=snapshot_rules,
+        snapshot_reviewed_at_UTC=snapshot_row.get("reviewed_at_UTC"),
+        latest_rule_ids=latest_rule_ids,
+        rules_changed_since_review=(snapshot_fingerprint != latest_fingerprint),
+    )
+
 @router.get(
     "/api/v1/review/{doc_id}/issues",
     summary="Get issues related to a PDF document",
@@ -61,6 +120,7 @@ async def get_pdf_issues(
     issues_service: IssuesService = Depends(get_issues_service),
     rules_service: RulesService = Depends(get_rules_service),
     documents_service: DocumentsService = Depends(get_documents_service),
+    review_rule_snapshots_repository: ReviewRuleSnapshotsRepository = Depends(get_review_rule_snapshots_repository),
 ) -> StreamingResponse:
     """
     Retrieve issues related to the document.
@@ -102,6 +162,7 @@ async def get_pdf_issues(
                 raise HTTPException(status_code=404, detail="Document not found on server")
 
             custom_rules = None
+            subtype_id: str | None = None
             if rule_ids:
                 custom_rules = await rules_service.get_rules_by_ids(rule_ids)
                 logging.info(f"Using {len(custom_rules)} custom rules for review")
@@ -109,8 +170,19 @@ async def get_pdf_issues(
                 document = await documents_service.get_document(doc_id)
                 if not document or not document.subtype_id:
                     raise HTTPException(status_code=400, detail="缺失文档分类信息，请重新上传并选择文书分类。")
+                subtype_id = document.subtype_id
                 custom_rules = await rules_service.get_rules_for_review(document.subtype_id)
                 logging.info(f"Loaded {len(custom_rules)} rules for review (subtype_id={document.subtype_id})")
+
+            snapshot_items = build_review_rules_snapshot_items(custom_rules or [])
+            snapshot_fingerprint = compute_review_rules_fingerprint(custom_rules or [])
+            await review_rule_snapshots_repository.upsert(
+                doc_id=doc_id,
+                reviewed_at_UTC=date_time.isoformat(),
+                subtype_id=subtype_id,
+                rules_snapshot=json.dumps(snapshot_items, ensure_ascii=False, separators=(",", ":")),
+                rules_fingerprint=snapshot_fingerprint,
+            )
 
             issues_stream = issues_service.initiate_review(str(pdf_path), user, date_time, custom_rules)
 

@@ -1,359 +1,38 @@
-import {
-  Badge,
-  Button,
-  Card,
-  CardHeader,
-  Divider,
-  Input,
-  MessageBar,
-  MessageBarBody,
-  MessageBarTitle,
-  Spinner,
-  Toolbar,
-  ToolbarButton,
-  makeStyles,
-  tokens,
-} from '@fluentui/react-components'
-import {
-  CheckmarkFilled,
-  ChevronDown16Regular,
-  ChevronUp16Regular,
-  PanelLeftContractRegular,
-  PanelLeftExpandRegular,
-  SearchRegular,
-  ZoomInRegular,
-  ZoomOutRegular,
-} from '@fluentui/react-icons'
+import { CheckOutlined, DownOutlined, ReloadOutlined, UpOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Drawer, List, Modal, Select, Spin, Tag } from 'antd'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
+import './ReviewPage.css'
 import { IssueDetailsPanel } from '../../components/IssueDetailsPanel'
 import { IssueListItem } from '../../components/IssueListItem'
-import { RulesPanel } from '../../components/RulesPanel'
 import { addAnnotation, deleteAnnotation, initAnnotations } from '../../services/annotations'
-import { streamApi, getDocument, getDocumentTypes } from '../../services/api'
+import { streamApi, getDocument, getDocumentTypes, getReviewRulesState } from '../../services/api'
 import { getBlob } from '../../services/storage'
 import { APIEvent } from '../../types/api-events'
 import { Issue, IssueStatus } from '../../types/issue'
-import type { Document as DocMetadata, DocumentTypeWithSubtypes } from '../../types/rule'
-import { issueRiskLevel, issueRiskTone, issueStatusLabel, issueTypeDescription, issueTypeLabel, normalizeIssueStatus } from '../../i18n/labels'
+import { issueRiskLevel, issueTypeLabel, normalizeIssueStatus } from '../../i18n/labels'
+import type { ReviewRuleSnapshotItem } from '../../types/rule'
 import { accentColors } from '../../theme'
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
 
-const useStyles = makeStyles({
-  layout: {
-    display: 'grid',
-    gridTemplateColumns: '280px minmax(0, 1fr) 340px',
-    gap: '16px',
-    height: 'calc(100vh - 120px)',
-    overflow: 'hidden',
-  },
-  // ========== PANEL ==========
-  panel: {
-    borderRadius: '12px',
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorNeutralBackground1,
-    height: '100%',
-    overflow: 'hidden',
-  },
-  // ========== LEFT ==========
-  left: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  leftHeader: {
-    padding: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    flexShrink: 0,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  countRow: {
-    display: 'flex',
-    gap: '10px',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  docName: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: '11px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '150px',
-  },
-  searchInput: {
-    width: '100%',
-  },
-  filterRow: {
-    display: 'flex',
-    gap: '6px',
-    flexWrap: 'wrap',
-  },
-  filterBtn: {
-    minWidth: 'auto',
-    fontSize: '12px',
-  },
-  filterBtnActive: {
-    backgroundColor: tokens.colorBrandBackground2,
-  },
-  leftList: {
-    padding: '8px 12px',
-    overflowY: 'auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    flexGrow: 1,
-    minHeight: 0,
-  },
-  // ========== CENTER ==========
-  center: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  toolbar: {
-    padding: '8px 12px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  toolbarSection: {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-  },
-  pageInfo: {
-    fontSize: '12px',
-    color: tokens.colorNeutralForeground3,
-    minWidth: '60px',
-    textAlign: 'center',
-  },
-  zoomInfo: {
-    fontSize: '12px',
-    color: tokens.colorNeutralForeground3,
-    minWidth: '48px',
-    textAlign: 'center',
-  },
-  // ========== PDF COMPARISON ==========
-  pdfCompareContainer: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '2px',
-    flexGrow: 1,
-    overflow: 'hidden',
-    backgroundColor: tokens.colorNeutralStroke2,
-  },
-  pdfCompareSingle: {
-    gridTemplateColumns: '1fr',
-  },
-  pdfPane: {
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    backgroundColor: tokens.colorNeutralBackground3,
-  },
-  pdfPaneHeader: {
-    padding: '6px 12px',
-    fontSize: '11px',
-    fontWeight: 600,
-    color: tokens.colorNeutralForeground3,
-    backgroundColor: tokens.colorNeutralBackground2,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-  },
-  pdfWrap: {
-    padding: '12px',
-    overflow: 'auto',
-    display: 'flex',
-    justifyContent: 'center',
-    flexGrow: 1,
-    backgroundColor: tokens.colorNeutralBackground3,
-  },
-  pdfCard: {
-    padding: 0,
-    backgroundColor: '#fff',
-    borderRadius: '4px',
-    boxShadow: tokens.shadow16,
-  },
-  // ========== RIGHT ==========
-  right: {
-    overflowY: 'auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    padding: '12px',
-    height: '100%',
-    minHeight: 0,
-  },
-  // ========== OVERVIEW ==========
-  accordion: {
-    borderRadius: '10px',
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorNeutralBackground1,
-    overflow: 'hidden',
-  },
-  accordionItem: {
-    '&:not(:last-child)': {
-      borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-    },
-  },
-  accordionHeader: {
-    padding: '12px 14px',
-    fontSize: '12px',
-    fontWeight: 600,
-    color: tokens.colorNeutralForeground1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    cursor: 'pointer',
-    backgroundColor: 'transparent',
-    transitionProperty: 'background-color',
-    transitionDuration: '150ms',
-    '&:hover': {
-      backgroundColor: tokens.colorNeutralBackground2,
-    },
-  },
-  accordionIcon: {
-    fontSize: '14px',
-    color: tokens.colorNeutralForeground3,
-    transitionProperty: 'transform',
-    transitionDuration: '200ms',
-  },
-  accordionIconOpen: {
-    transform: 'rotate(180deg)',
-  },
-  accordionContent: {
-    backgroundColor: tokens.colorNeutralBackground2,
-  },
-  // ========== OVERVIEW ==========
-  overviewCard: {
-    borderRadius: '10px',
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorNeutralBackground1,
-    overflow: 'hidden',
-  },
-  overviewHeader: {
-    padding: '10px 14px',
-    fontSize: '12px',
-    fontWeight: 600,
-    color: tokens.colorNeutralForeground1,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  overviewGrid: {
-    display: 'flex',
-    gap: '10px',
-    padding: '12px 14px',
-    alignItems: 'stretch',
-  },
-  metricItem: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '10px 12px',
-    borderRadius: '8px',
-    backgroundColor: tokens.colorNeutralBackground2,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  metricLabel: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: '11px',
-  },
-  metricValue: {
-    fontSize: '14px',
-    fontWeight: 700,
-    color: tokens.colorNeutralForeground1,
-  },
-  // ========== TYPE CARDS ==========
-  typeCards: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0',
-    maxHeight: '240px',
-    overflowY: 'auto',
-  },
-  typeCard: {
-    padding: '10px 14px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '12px',
-    transitionProperty: 'background-color',
-    transitionDuration: '150ms',
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-    '&:last-child': {
-      borderBottom: 'none',
-    },
-    '&:hover': {
-      backgroundColor: tokens.colorNeutralBackground3,
-    },
-  },
-  typeInfo: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-    flexGrow: 1,
-    minWidth: 0,
-  },
-  typeName: {
-    fontSize: '13px',
-    fontWeight: 600,
-    color: tokens.colorNeutralForeground1,
-  },
-  typeDesc: {
-    fontSize: '11px',
-    color: tokens.colorNeutralForeground3,
-    lineHeight: '1.4',
-  },
-  typeCount: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    flexShrink: 0,
-  },
-  analyzeStatus: {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    padding: '10px 12px',
-    color: tokens.colorNeutralForeground3,
-    fontSize: '12px',
-  },
-  noIssues: {
-    color: tokens.colorNeutralForeground3,
-    padding: '16px 12px',
-    textAlign: 'center',
-    fontSize: '12px',
-    lineHeight: '1.6',
-  },
-})
-
 function Review() {
-  const classes = useStyles()
-  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
   const [docId, setDocId] = useState<string>()
-  const [originalPdfData, setOriginalPdfData] = useState<{ data: Uint8Array }>()
   const [pdfData, setPdfData] = useState<{ data: Uint8Array }>()
   const [pdfLoadError, setPdfLoadError] = useState<string>()
-  const [pdfLoaded, setPdfLoaded] = useState(false)
   const [numPages, setNumPages] = useState<number>()
   const [pageNumber, setPageNumber] = useState(1)
   const [zoom, setZoom] = useState(1.0)
-  const [compareMode, setCompareMode] = useState(true)
   const [pdfContainerWidth, setPdfContainerWidth] = useState(700)
 
   const [issues, setIssues] = useState<Issue[]>([])
   const [selectedIssueId, setSelectedIssueId] = useState<string>()
-  const [selectedAnnotId, setSelectedAnnotId] = useState<string>()
+  const [, setSelectedAnnotId] = useState<string>()
 
   const [checkInProgress, setCheckInProgress] = useState(false)
   const [checkComplete, setCheckComplete] = useState(false)
@@ -361,24 +40,25 @@ function Review() {
 
   const [hideTypesFilter, setHideTypesFilter] = useState<string[]>([])
   const [statusFilter, setStatusFilter] = useState<string[]>(Object.values(IssueStatus))
-  const [query, setQuery] = useState('')
-  const [enabledRuleIds, setEnabledRuleIds] = useState<string[]>([])
+  const [latestRuleIds, setLatestRuleIds] = useState<string[]>([])
   const [totalRulesCount, setTotalRulesCount] = useState(0)
-  const [rulesExpanded, setRulesExpanded] = useState(false)
-  const [typesExpanded, setTypesExpanded] = useState(false)
+  const [rulesDrawerOpen, setRulesDrawerOpen] = useState(false)
+  const [reviewRules, setReviewRules] = useState<ReviewRuleSnapshotItem[]>([])
+  const [reviewRulesLoading, setReviewRulesLoading] = useState(false)
+  const [reviewRulesError, setReviewRulesError] = useState<string>()
+  const [rulesChangedSinceReview, setRulesChangedSinceReview] = useState(false)
 
   // 文档分类信息
-  const [documentSubtypeId, setDocumentSubtypeId] = useState<string>()
   const [documentCategoryLabel, setDocumentCategoryLabel] = useState<string>()
 
   const abortControllerRef = useRef<AbortController>()
-  const enabledRuleIdsRef = useRef<string[]>([])
+  const latestRuleIdsRef = useRef<string[]>([])
   const pdfContainerRef = useRef<HTMLDivElement>(null)
 
   // Keep ref in sync with state
   useEffect(() => {
-    enabledRuleIdsRef.current = enabledRuleIds
-  }, [enabledRuleIds])
+    latestRuleIdsRef.current = latestRuleIds
+  }, [latestRuleIds])
 
   const selectedIssue = useMemo(
     () => issues.find((i) => i.id === selectedIssueId),
@@ -386,19 +66,25 @@ function Review() {
   )
 
   const filteredIssues = useMemo(() => {
-    const q = query.trim()
     return issues
-      .filter((issue) => statusFilter.includes(normalizeIssueStatus(issue.status as unknown as string)) && !hideTypesFilter.includes(issue.type))
-      .filter((issue) => (q ? `${issue.text} ${issue.explanation} ${issue.suggested_fix}`.includes(q) : true))
+      .filter(
+        (issue) =>
+          statusFilter.includes(
+            normalizeIssueStatus(issue.status as unknown as string),
+          ) && !hideTypesFilter.includes(issue.type),
+      )
       .slice()
       .sort((a, b) => (a.location?.page_num ?? 0) - (b.location?.page_num ?? 0))
-  }, [issues, statusFilter, hideTypesFilter, query])
+  }, [issues, statusFilter, hideTypesFilter])
 
   const types = useMemo(() => {
     const map = new Map<string, number>()
     for (const i of issues) map.set(i.type, (map.get(i.type) ?? 0) + 1)
     return Array.from(map.entries()).sort((a, b) => b[1] - a[1])
   }, [issues])
+
+  const allIssueTypes = useMemo(() => types.map(([t]) => t), [types])
+  const typeCountByType = useMemo(() => new Map(types), [types])
 
   const metrics = useMemo(() => {
     const normalized = issues.map((i) => normalizeIssueStatus(i.status as unknown as string))
@@ -421,6 +107,23 @@ function Review() {
     return { total, processed, high, medium, low, conclusion }
   }, [issues])
 
+  const refreshRulesState = useCallback(async (showLoading = true) => {
+    if (!docId) return
+    if (showLoading) setReviewRulesLoading(true)
+    setReviewRulesError(undefined)
+    try {
+      const state = await getReviewRulesState(docId)
+      setReviewRules(state.snapshot_rules)
+      setTotalRulesCount(state.snapshot_rules.length)
+      setLatestRuleIds(state.latest_rule_ids)
+      setRulesChangedSinceReview(state.rules_changed_since_review)
+    } catch (e) {
+      setReviewRulesError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (showLoading) setReviewRulesLoading(false)
+    }
+  }, [docId])
+
   const runCheck = useCallback((force = false) => {
     if (!docId) return
     setCheckInProgress(true)
@@ -431,7 +134,7 @@ function Review() {
     // Build query params - use ref to get current rule IDs without adding dependency
     const params = new URLSearchParams()
     if (force) params.set('force', 'true')
-    const currentRuleIds = enabledRuleIdsRef.current
+    const currentRuleIds = latestRuleIdsRef.current
     if (currentRuleIds.length > 0) {
       currentRuleIds.forEach(id => params.append('rule_ids', id))
     }
@@ -466,6 +169,7 @@ function Review() {
             abortControllerRef.current?.abort()
             setCheckComplete(true)
             setCheckInProgress(false)
+            refreshRulesState(false)
             break
           }
           default:
@@ -478,11 +182,24 @@ function Review() {
       },
       abortControllerRef.current,
     )
-  }, [docId])
+  }, [docId, refreshRulesState])
+
+  const handleReReview = useCallback(() => {
+    if (!rulesChangedSinceReview) {
+      runCheck(true)
+      return
+    }
+    Modal.confirm({
+      title: '确认重新审阅？',
+      content: '此操作将清空历史问题列表，并按照最新适用规则审阅，是否继续？',
+      okText: '继续',
+      cancelText: '取消',
+      onOk: () => runCheck(true),
+    })
+  }, [rulesChangedSinceReview, runCheck])
 
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
     setNumPages(numPages)
-    setPdfLoaded(true)
   }
 
   function handleSelectIssue(issue: Issue) {
@@ -542,10 +259,6 @@ function Review() {
     })
   }
 
-  function toggleTypeVisibility(type: string) {
-    setHideTypesFilter((types) => (types.includes(type) ? types.filter((t) => t !== type) : [...types, type]))
-  }
-
   useEffect(() => {
     const d = searchParams.get('document')
     if (d) setDocId(d)
@@ -559,7 +272,6 @@ function Review() {
       try {
         const docMeta = await getDocument(docId)
         if (docMeta?.subtype_id) {
-          setDocumentSubtypeId(docMeta.subtype_id)
           // 获取分类名称用于展示
           const types = await getDocumentTypes()
           for (const type of types) {
@@ -581,12 +293,9 @@ function Review() {
   useEffect(() => {
     async function loadPdf(id: string) {
       setPdfLoadError(undefined)
-      setPdfLoaded(false)
       try {
         const pdfBlob = await getBlob(id)
         const pdfByteArray = new Uint8Array(await pdfBlob.arrayBuffer())
-        // Store original PDF for comparison
-        setOriginalPdfData({ data: pdfByteArray.slice() })
         const pdfBytesWithAnnot = initAnnotations(pdfByteArray)
         setPdfData({ data: pdfBytesWithAnnot })
       } catch (e) {
@@ -595,6 +304,10 @@ function Review() {
     }
     if (docId) loadPdf(docId)
   }, [docId])
+
+  useEffect(() => {
+    refreshRulesState()
+  }, [refreshRulesState])
 
   useEffect(() => {
     runCheck()
@@ -614,245 +327,209 @@ function Review() {
     updateWidth()
     window.addEventListener('resize', updateWidth)
     return () => window.removeEventListener('resize', updateWidth)
-  }, [compareMode])
+  }, [])
 
-  const checkButtonIcon = checkInProgress ? <Spinner size="tiny" /> : checkComplete ? <CheckmarkFilled /> : undefined
+  const checkButtonIcon = checkComplete ? <CheckOutlined /> : <ReloadOutlined />
+  const conclusionTagColor =
+    metrics.conclusion.tone === 'success'
+      ? 'success'
+      : metrics.conclusion.tone === 'danger'
+        ? 'error'
+        : metrics.conclusion.tone === 'warning'
+          ? 'warning'
+          : 'processing'
 
   return (
-    <div className={classes.layout}>
+    <div className="review-layout">
       {/* LEFT */}
-      <Card className={`${classes.panel} ${classes.left}`}>
-        <div className={classes.leftHeader}>
-          <div className={classes.countRow}>
-            <Badge appearance="tint" color="informative" shape="rounded">
-              {filteredIssues.length}/{issues.length} 条
-            </Badge>
-            <span className={classes.docName} title={docId ?? ''}>{docId ?? ''}</span>
+      <div className="review-panel review-left">
+        <div className="review-left-header">
+          <div className="review-count-row">
+            <div className="review-top-tags">
+              {documentCategoryLabel && <Tag color="blue">{documentCategoryLabel}</Tag>}
+            </div>
+            <Tag color="processing">{filteredIssues.length}/{issues.length} 条</Tag>
           </div>
-          {documentCategoryLabel && (
-            <Badge appearance="tint" color="brand" shape="rounded" style={{ fontSize: '11px' }}>
-              {documentCategoryLabel}
-            </Badge>
-          )}
-          <Input
-            size="small"
-            className={classes.searchInput}
-            contentBefore={<SearchRegular />}
-            placeholder="搜索问题…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <div className={classes.filterRow}>
-            <Button
-              size="small"
-              appearance={statusFilter.length === Object.values(IssueStatus).length ? 'primary' : 'secondary'}
-              className={classes.filterBtn}
-              onClick={() => setStatusFilter(Object.values(IssueStatus))}
-            >
+          <div className="review-filter-row">
+            <Button size="small" type={statusFilter.length === Object.values(IssueStatus).length ? 'primary' : 'default'} onClick={() => setStatusFilter(Object.values(IssueStatus))}>
               全部
             </Button>
-            <Button
-              size="small"
-              appearance={statusFilter.length === 1 && statusFilter.includes(IssueStatus.NotReviewed) ? 'primary' : 'secondary'}
-              className={classes.filterBtn}
-              onClick={() => setStatusFilter([IssueStatus.NotReviewed])}
-            >
+            <Button size="small" type={statusFilter.length === 1 && statusFilter.includes(IssueStatus.NotReviewed) ? 'primary' : 'default'} onClick={() => setStatusFilter([IssueStatus.NotReviewed])}>
               待处理
             </Button>
-            <Button
-              size="small"
-              appearance={statusFilter.length === 1 && statusFilter.includes(IssueStatus.Accepted) ? 'primary' : 'secondary'}
-              className={classes.filterBtn}
-              onClick={() => setStatusFilter([IssueStatus.Accepted])}
-            >
+            <Button size="small" type={statusFilter.length === 1 && statusFilter.includes(IssueStatus.Accepted) ? 'primary' : 'default'} onClick={() => setStatusFilter([IssueStatus.Accepted])}>
               已采纳
             </Button>
-            <Button
-              size="small"
-              appearance={statusFilter.length === 1 && statusFilter.includes(IssueStatus.Dismissed) ? 'primary' : 'secondary'}
-              className={classes.filterBtn}
-              onClick={() => setStatusFilter([IssueStatus.Dismissed])}
-            >
+            <Button size="small" type={statusFilter.length === 1 && statusFilter.includes(IssueStatus.Dismissed) ? 'primary' : 'default'} onClick={() => setStatusFilter([IssueStatus.Dismissed])}>
               已忽略
             </Button>
           </div>
+          {allIssueTypes.length > 0 && (
+            <Select
+              className="review-type-filter"
+              allowClear
+              placeholder="全部分类"
+              value={
+                hideTypesFilter.length === 0
+                  ? undefined
+                  : allIssueTypes.find((t) => !hideTypesFilter.includes(t))
+              }
+              options={allIssueTypes.map((t) => ({
+                value: t,
+                label: `${issueTypeLabel(t)} (${typeCountByType.get(t) ?? 0})`,
+              }))}
+              onChange={(value) => {
+                const selected = value as string | undefined
+                if (!selected) {
+                  setHideTypesFilter([])
+                  return
+                }
+                setHideTypesFilter(allIssueTypes.filter((t) => t !== selected))
+              }}
+            />
+          )}
         </div>
-        <div className={classes.leftList}>
+        <div className="review-left-list">
           {checkError && (
-            <MessageBar intent="error">
-              <MessageBarBody>
-                <MessageBarTitle>审核失败</MessageBarTitle>
-                {checkError}
-              </MessageBarBody>
-            </MessageBar>
+            <Alert type="error" showIcon message="审核失败" description={checkError} />
           )}
           {filteredIssues.map((issue) => (
             <IssueListItem key={issue.id} issue={issue} selected={selectedIssueId === issue.id} onSelect={handleSelectIssue} />
           ))}
           {checkInProgress && (
-            <div className={classes.analyzeStatus}>
-              <Spinner size="tiny" /> 分析中…
+            <div className="review-analyze-status">
+              <Spin size="small" /> 分析中…
             </div>
           )}
           {!checkInProgress && filteredIssues.length === 0 && (
-            <div className={classes.noIssues}>暂无问题</div>
+            <div className="review-empty">暂无问题</div>
           )}
         </div>
-      </Card>
+      </div>
 
       {/* CENTER */}
-      <Card className={`${classes.panel} ${classes.center}`}>
-        <div className={classes.toolbar}>
-          <div className={classes.toolbarSection}>
-            <Toolbar size="small">
-              <ToolbarButton icon={<ChevronUp16Regular />} onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber === 1} />
-              <ToolbarButton icon={<ChevronDown16Regular />} onClick={() => setPageNumber((p) => Math.min(numPages ?? p + 1, p + 1))} disabled={!!numPages && pageNumber === numPages} />
-            </Toolbar>
-            <span className={classes.pageInfo}>{pageNumber}/{numPages ?? '-'}</span>
+      <div className="review-panel review-center">
+        <div className="review-toolbar">
+          <div className="review-toolbar-section">
+            <Button size="small" icon={<UpOutlined />} onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber === 1} />
+            <Button size="small" icon={<DownOutlined />} onClick={() => setPageNumber((p) => Math.min(numPages ?? p + 1, p + 1))} disabled={!!numPages && pageNumber === numPages} />
+            <span className="review-page-info">{pageNumber}/{numPages ?? '-'}</span>
           </div>
-          <div className={classes.toolbarSection}>
-            <Button
-              size="small"
-              appearance={compareMode ? 'primary' : 'secondary'}
-              icon={compareMode ? <PanelLeftContractRegular /> : <PanelLeftExpandRegular />}
-              onClick={() => setCompareMode((m) => !m)}
-            >
-              {compareMode ? '单视图' : '对比'}
-            </Button>
-            <Button size="small" appearance="subtle" icon={<ZoomOutRegular />} onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} />
-            <span className={classes.zoomInfo}>{Math.round(zoom * 100)}%</span>
-            <Button size="small" appearance="subtle" icon={<ZoomInRegular />} onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))} />
-            <Button size="small" appearance="primary" icon={checkButtonIcon} disabledFocusable={checkInProgress} onClick={() => runCheck(true)}>
+          <div className="review-toolbar-section">
+            <Button size="small" icon={<ZoomOutOutlined />} onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} />
+            <span className="review-zoom-info">{Math.round(zoom * 100)}%</span>
+            <Button size="small" icon={<ZoomInOutlined />} onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))} />
+            <Button size="small" type="primary" icon={checkButtonIcon} loading={checkInProgress} onClick={handleReReview}>
               重新审阅
             </Button>
-            <Button size="small" appearance="secondary" onClick={() => navigate('/')}>
-              返回
-            </Button>
           </div>
         </div>
-        <div ref={pdfContainerRef} className={`${classes.pdfCompareContainer} ${!compareMode ? classes.pdfCompareSingle : ''}`}>
-          {/* Original PDF */}
-          {compareMode && (
-            <div className={classes.pdfPane}>
-              <div className={classes.pdfPaneHeader}>原始文档</div>
-              <div className={classes.pdfWrap}>
-                <Card className={classes.pdfCard}>
-                  {pdfLoadError && (
-                    <MessageBar intent="error">
-                      <MessageBarBody>{pdfLoadError}</MessageBarBody>
-                    </MessageBar>
-                  )}
-                  <Document file={originalPdfData} loading={<Spinner />} noData={<Spinner />}>
-                    <Page pageNumber={pageNumber} width={Math.floor((compareMode ? pdfContainerWidth / 2 : pdfContainerWidth) * zoom)} loading={<Spinner />} />
-                  </Document>
-                </Card>
+        <div ref={pdfContainerRef} className="review-pdf-compare-container review-pdf-compare-single">
+          <div className="review-pdf-pane">
+            <div className="review-pdf-wrap">
+              <div className="review-pdf-card">
+                {pdfLoadError && (
+                  <Alert type="error" showIcon message={pdfLoadError} />
+                )}
+                <Document file={pdfData} onLoadSuccess={onDocumentLoadSuccess} loading={<Spin />} noData={<Spin />}>
+                  <Page pageNumber={pageNumber} width={Math.floor(pdfContainerWidth * zoom)} loading={<Spin />} />
+                </Document>
               </div>
             </div>
-          )}
-          {/* Annotated PDF */}
-          <div className={classes.pdfPane}>
-            {compareMode && <div className={classes.pdfPaneHeader}>标注文档</div>}
-            <div className={classes.pdfWrap}>
-              <Card className={classes.pdfCard}>
-                {pdfLoadError && !compareMode && (
-                  <MessageBar intent="error">
-                    <MessageBarBody>{pdfLoadError}</MessageBarBody>
-                  </MessageBar>
-                )}
-                <Document file={pdfData} onLoadSuccess={onDocumentLoadSuccess} loading={<Spinner />} noData={<Spinner />}>
-                  <Page pageNumber={pageNumber} width={Math.floor((compareMode ? pdfContainerWidth / 2 : pdfContainerWidth) * zoom)} loading={<Spinner />} />
-                </Document>
-              </Card>
-            </div>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* RIGHT */}
-      <div className={classes.right}>
-        <div className={classes.overviewCard}>
-          <div className={classes.overviewHeader}>审阅概览</div>
-          <div className={classes.overviewGrid}>
-            <div className={classes.metricItem}>
-              <span className={classes.metricLabel}>进度</span>
-              <span className={classes.metricValue}>{metrics.processed}/{metrics.total}</span>
+      <div className="review-right">
+        <Card
+          size="small"
+          className="review-overview-card"
+          title="审阅概览"
+          extra={
+            <Button type="link" size="small" onClick={() => setRulesDrawerOpen(true)}>
+              查看审阅规则
+            </Button>
+          }
+          bodyStyle={{ padding: 0 }}
+          headStyle={{ padding: '10px 14px' }}
+        >
+          <div className="review-overview-grid">
+            <div className="review-metric-item">
+              <span className="review-metric-label">进度</span>
+              <span className="review-metric-value">{metrics.processed}/{metrics.total}</span>
             </div>
-            <div className={classes.metricItem}>
-              <span className={classes.metricLabel}>高/中/低</span>
-              <span className={classes.metricValue} style={{ display: 'flex', gap: '4px' }}>
+            <div className="review-metric-item">
+              <span className="review-metric-label">高/中/低</span>
+              <span className="review-metric-value" style={{ display: 'flex', gap: '4px' }}>
                 <span style={{ color: accentColors.danger }}>{metrics.high}</span>
-                <span style={{ color: tokens.colorNeutralForeground3 }}>/</span>
+                <span style={{ color: 'rgba(0, 0, 0, 0.45)' }}>/</span>
                 <span style={{ color: accentColors.warning }}>{metrics.medium}</span>
-                <span style={{ color: tokens.colorNeutralForeground3 }}>/</span>
+                <span style={{ color: 'rgba(0, 0, 0, 0.45)' }}>/</span>
                 <span style={{ color: accentColors.success }}>{metrics.low}</span>
               </span>
             </div>
-            <div className={classes.metricItem}>
-              <span className={classes.metricLabel}>结论</span>
-              <Badge appearance="filled" shape="rounded" color={metrics.conclusion.tone} style={{ fontSize: '11px' }}>
-                {metrics.conclusion.label}
-              </Badge>
+            <div className="review-metric-item">
+              <span className="review-metric-label">结论</span>
+              <Tag color={conclusionTagColor}>{metrics.conclusion.label}</Tag>
             </div>
           </div>
+        </Card>
+
+        <div className="review-right-body">
+          <IssueDetailsPanel docId={docId ?? ''} issue={selectedIssue} onUpdate={handleUpdateIssue} />
         </div>
 
-        <IssueDetailsPanel docId={docId ?? ''} issue={selectedIssue} onUpdate={handleUpdateIssue} />
-
-        <div className={classes.accordion}>
-          {docId && (
-            <div className={classes.accordionItem}>
-              <div className={classes.accordionHeader} onClick={() => setRulesExpanded(!rulesExpanded)}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  审核规则
-                  <Badge appearance="outline" size="small" color="informative">{enabledRuleIds.length}/{totalRulesCount}</Badge>
-                </span>
-                <ChevronDown16Regular className={`${classes.accordionIcon} ${rulesExpanded ? classes.accordionIconOpen : ''}`} />
-              </div>
-              {rulesExpanded && (
-                <div className={classes.accordionContent}>
-                  <RulesPanel
-                    subtypeId={documentSubtypeId}
-                    enabledRuleIds={enabledRuleIds}
-                    onEnabledRulesChange={setEnabledRuleIds}
-                    onRulesCountChange={setTotalRulesCount}
-                    hideHeader={true}
-                  />
-                </div>
+        <Drawer
+          title="审阅规则"
+          placement="right"
+          width={380}
+          open={rulesDrawerOpen}
+          onClose={() => setRulesDrawerOpen(false)}
+          destroyOnClose
+        >
+          {reviewRulesLoading ? (
+            <div className="review-analyze-status">
+              <Spin size="small" /> 加载中…
+            </div>
+          ) : reviewRulesError ? (
+            <Alert type="error" showIcon message="加载规则失败" description={reviewRulesError} />
+          ) : (
+            <>
+              {rulesChangedSinceReview && (
+                <Alert
+                  banner
+                  type="warning"
+                  showIcon
+                  message="此文档审阅后，有适用规则发生了变更。如需按照新规则类型审阅，请重新审阅"
+                  style={{ marginBottom: 12 }}
+                />
               )}
-            </div>
-          )}
-
-          <div className={classes.accordionItem}>
-            <div className={classes.accordionHeader} onClick={() => setTypesExpanded(!typesExpanded)}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                问题分类
-                {types.length > 0 && <Badge appearance="outline" size="small" color="informative">{types.length}</Badge>}
-              </span>
-              <ChevronDown16Regular className={`${classes.accordionIcon} ${typesExpanded ? classes.accordionIconOpen : ''}`} />
-            </div>
-            {typesExpanded && (
-              <div className={classes.accordionContent}>
-                <div className={classes.typeCards}>
-                  {types.length === 0 && <div className={classes.noIssues}>暂无</div>}
-                  {types.map(([type, count]) => (
-                    <div key={type} className={classes.typeCard}>
-                      <div className={classes.typeInfo}>
-                        <div className={classes.typeName}>{issueTypeLabel(type)}</div>
-                        <div className={classes.typeDesc}>{issueTypeDescription(type) ?? ''}</div>
-                      </div>
-                      <div className={classes.typeCount}>
-                        <Badge appearance="tint" shape="rounded" color={issueRiskTone(type)}>{count}</Badge>
-                        <Button appearance="subtle" size="small" onClick={() => toggleTypeVisibility(type)}>
-                          {hideTypesFilter.includes(type) ? '显示' : '隐藏'}
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div style={{ marginBottom: 12 }}>
+                <Tag>{reviewRules.length}/{totalRulesCount}</Tag>
               </div>
-            )}
-          </div>
-        </div>
+              <List
+                dataSource={reviewRules}
+                renderItem={(rule) => {
+                  const riskColor = rule.risk_level === '高' ? 'error' : rule.risk_level === '中' ? 'warning' : 'success'
+                  return (
+                    <List.Item style={{ paddingLeft: 0, paddingRight: 0 }}>
+                      <List.Item.Meta
+                        title={
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontWeight: 600 }}>{rule.name}</span>
+                            <Tag color={riskColor}>{rule.risk_level}</Tag>
+                          </div>
+                        }
+                        description={rule.description}
+                      />
+                    </List.Item>
+                  )
+                }}
+              />
+            </>
+          )}
+        </Drawer>
       </div>
     </div>
   )

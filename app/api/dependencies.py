@@ -8,6 +8,7 @@ from database.db_client import SQLiteClient
 from database.issues_repository import IssuesRepository
 from database.rules_repository import RulesRepository
 from database.documents_repository import DocumentsRepository
+from database.review_rule_snapshots_repository import ReviewRuleSnapshotsRepository
 
 
 _issues_service: IssuesService | None = None
@@ -18,6 +19,9 @@ _rules_service_lock = asyncio.Lock()
 
 _documents_service: DocumentsService | None = None
 _documents_service_lock = asyncio.Lock()
+
+_review_rule_snapshots_repo: ReviewRuleSnapshotsRepository | None = None
+_review_rule_snapshots_repo_lock = asyncio.Lock()
 
 
 async def get_issues_service() -> IssuesService:
@@ -82,4 +86,21 @@ async def get_documents_service() -> DocumentsService:
         await repo.init()
         _documents_service = DocumentsService(repo)
         return _documents_service
+
+
+async def get_review_rule_snapshots_repository() -> ReviewRuleSnapshotsRepository:
+    global _review_rule_snapshots_repo
+
+    if _review_rule_snapshots_repo is not None:
+        return _review_rule_snapshots_repo
+
+    async with _review_rule_snapshots_repo_lock:
+        if _review_rule_snapshots_repo is not None:
+            return _review_rule_snapshots_repo
+
+        db_client = SQLiteClient()
+        repo = ReviewRuleSnapshotsRepository(db_client)
+        await repo.init()
+        _review_rule_snapshots_repo = repo
+        return _review_rule_snapshots_repo
 
