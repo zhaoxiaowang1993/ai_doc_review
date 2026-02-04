@@ -1,12 +1,14 @@
 import tempfile
 import sys
 import unittest
+import hashlib
 from pathlib import Path
+from uuid import uuid4
 
 API_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = API_DIR.parent
 ROOT_DIR = APP_DIR.parent
-for p in (ROOT_DIR, APP_DIR):
+for p in (API_DIR, ROOT_DIR, APP_DIR):
     p_str = str(p)
     if p_str in sys.path:
         sys.path.remove(p_str)
@@ -17,33 +19,26 @@ from fastapi.testclient import TestClient
 
 from config.config import settings
 from database.db_client import SQLiteClient
+from database.analysis_issues_repository import AnalysisIssuesRepository
+from database.analysis_runs_repository import AnalysisRunsRepository
+from database.issues_repository import IssuesRepository
 from database.rules_repository import RulesRepository
 from database.documents_repository import DocumentsRepository
-from database.review_rule_snapshots_repository import ReviewRuleSnapshotsRepository
 from dependencies import (
     get_documents_service,
     get_issues_service,
-    get_review_rule_snapshots_repository,
     get_rules_service,
+    get_storage_provider,
 )
 from routers import issues as issues_router
 from services.documents_service import DocumentsService
+from services.issues_service import IssuesService
 from services.rules_service import RulesService
+from services.storage_provider import LocalStorageProvider
 
 
-class _FakeIssuesRepository:
-    async def delete_issues_by_doc(self, doc_id: str) -> int:
-        return 0
-
-
-class _FakeIssuesService:
-    def __init__(self) -> None:
-        self.issues_repository = _FakeIssuesRepository()
-
-    async def get_issues_data(self, doc_id: str):
-        return []
-
-    async def initiate_review(self, pdf_path: str, user, time_stamp, custom_rules=None):
+class _FakePipeline:
+    async def stream_issues(self, *, doc_id: str, pdf_path: str, user_id: str, timestamp_iso: str, cache_key: str, custom_rules=None):
         if False:
             yield []
         return
@@ -63,21 +58,37 @@ class TestReviewRulesState(unittest.TestCase):
                 db_client = SQLiteClient(db_path=str(db_path))
                 rules_repo = RulesRepository(db_client)
                 documents_repo = DocumentsRepository(db_client)
-                snapshots_repo = ReviewRuleSnapshotsRepository(db_client)
+                issues_repo = IssuesRepository(db_client)
+                analysis_runs_repo = AnalysisRunsRepository(db_client)
+                analysis_issues_repo = AnalysisIssuesRepository(db_client)
 
                 self._run_async(rules_repo.init())
                 self._run_async(documents_repo.init())
-                self._run_async(snapshots_repo.init())
+                self._run_async(issues_repo.init())
+                self._run_async(analysis_runs_repo.init())
+                self._run_async(analysis_issues_repo.init())
 
                 rules_service = RulesService(rules_repo)
                 documents_service = DocumentsService(documents_repo)
+                storage = LocalStorageProvider(base_dir=str(docs_dir))
 
-                doc_id = "test.pdf"
-                (docs_dir / doc_id).write_bytes(b"%PDF-1.4\n%fake\n")
+                doc_id = str(uuid4())
+                pdf_bytes = b"%PDF-1.4\n%fake\n"
+                sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+                (docs_dir / "objects").mkdir(parents=True, exist_ok=True)
+                (docs_dir / "objects" / f"{doc_id}.pdf").write_bytes(pdf_bytes)
                 self._run_async(
                     documents_service.create_document(
-                        filename=doc_id,
+                        owner_id="local-user",
+                        original_filename="test.pdf",
+                        display_name="test.pdf",
                         subtype_id="subtype_labor_contract",
+                        storage_provider="local",
+                        storage_key=f"objects/{doc_id}.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=len(pdf_bytes),
+                        sha256=sha256,
+                        created_by="local-user",
                         doc_id=doc_id,
                     )
                 )
@@ -95,8 +106,14 @@ class TestReviewRulesState(unittest.TestCase):
                 app.include_router(issues_router.router)
                 app.dependency_overrides[get_rules_service] = lambda: rules_service
                 app.dependency_overrides[get_documents_service] = lambda: documents_service
-                app.dependency_overrides[get_review_rule_snapshots_repository] = lambda: snapshots_repo
-                app.dependency_overrides[get_issues_service] = lambda: _FakeIssuesService()
+                app.dependency_overrides[get_storage_provider] = lambda: storage
+                app.dependency_overrides[get_issues_service] = lambda: IssuesService(
+                    issues_repo,
+                    analysis_runs_repo,
+                    analysis_issues_repo,
+                    documents_repo,
+                    _FakePipeline(),
+                )
 
                 client = TestClient(app)
 

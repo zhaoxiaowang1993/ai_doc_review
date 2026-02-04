@@ -9,8 +9,7 @@ import './ReviewPage.css'
 import { IssueDetailsPanel } from '../../components/IssueDetailsPanel'
 import { IssueListItem } from '../../components/IssueListItem'
 import { addAnnotation, deleteAnnotation, initAnnotations } from '../../services/annotations'
-import { streamApi, getDocument, getDocumentTypes, getReviewRulesState } from '../../services/api'
-import { getBlob } from '../../services/storage'
+import { streamApi, getDocument, getDocumentTypes, getReviewRulesState, downloadDocumentFile, getDocumentIssues } from '../../services/api'
 import { APIEvent } from '../../types/api-events'
 import { Issue, IssueStatus } from '../../types/issue'
 import { issueRiskLevel, issueTypeLabel, normalizeIssueStatus } from '../../i18n/labels'
@@ -260,7 +259,7 @@ function Review() {
   }
 
   useEffect(() => {
-    const d = searchParams.get('document')
+    const d = searchParams.get('doc_id')
     if (d) setDocId(d)
     else setPdfLoadError('URL 中未指定文档')
   }, [searchParams])
@@ -294,7 +293,7 @@ function Review() {
     async function loadPdf(id: string) {
       setPdfLoadError(undefined)
       try {
-        const pdfBlob = await getBlob(id)
+        const pdfBlob = await downloadDocumentFile(id)
         const pdfByteArray = new Uint8Array(await pdfBlob.arrayBuffer())
         const pdfBytesWithAnnot = initAnnotations(pdfByteArray)
         setPdfData({ data: pdfBytesWithAnnot })
@@ -310,7 +309,24 @@ function Review() {
   }, [refreshRulesState])
 
   useEffect(() => {
-    runCheck()
+    async function loadExistingIssues() {
+      if (!docId) return
+      try {
+        const existing = await getDocumentIssues(docId)
+        if (existing.length > 0) {
+          setIssues(existing)
+          setCheckInProgress(false)
+          setCheckComplete(true)
+          setCheckError(undefined)
+          return
+        }
+        runCheck(false)
+      } catch (e) {
+        setCheckError(e instanceof Error ? e.message : String(e))
+        setCheckInProgress(false)
+      }
+    }
+    loadExistingIssues()
     return () => abortControllerRef.current?.abort()
   }, [docId, runCheck])
 

@@ -4,11 +4,13 @@ from services.issues_service import IssuesService
 from services.rules_service import RulesService
 from services.documents_service import DocumentsService
 from services.lc_pipeline import LangChainPipeline
+from services.storage_provider import LocalStorageProvider
 from database.db_client import SQLiteClient
+from database.analysis_issues_repository import AnalysisIssuesRepository
+from database.analysis_runs_repository import AnalysisRunsRepository
 from database.issues_repository import IssuesRepository
 from database.rules_repository import RulesRepository
 from database.documents_repository import DocumentsRepository
-from database.review_rule_snapshots_repository import ReviewRuleSnapshotsRepository
 
 
 _issues_service: IssuesService | None = None
@@ -20,8 +22,8 @@ _rules_service_lock = asyncio.Lock()
 _documents_service: DocumentsService | None = None
 _documents_service_lock = asyncio.Lock()
 
-_review_rule_snapshots_repo: ReviewRuleSnapshotsRepository | None = None
-_review_rule_snapshots_repo_lock = asyncio.Lock()
+_storage_provider: LocalStorageProvider | None = None
+_storage_provider_lock = asyncio.Lock()
 
 
 async def get_issues_service() -> IssuesService:
@@ -41,10 +43,16 @@ async def get_issues_service() -> IssuesService:
             return _issues_service
 
         db_client = SQLiteClient()
-        repo = IssuesRepository(db_client)
-        await repo.init()
+        issues_repo = IssuesRepository(db_client)
+        analysis_runs_repo = AnalysisRunsRepository(db_client)
+        analysis_issues_repo = AnalysisIssuesRepository(db_client)
+        documents_repo = DocumentsRepository(db_client)
+        await issues_repo.init()
+        await analysis_runs_repo.init()
+        await analysis_issues_repo.init()
+        await documents_repo.init()
         pipeline = LangChainPipeline()
-        _issues_service = IssuesService(repo, pipeline)
+        _issues_service = IssuesService(issues_repo, analysis_runs_repo, analysis_issues_repo, documents_repo, pipeline)
         return _issues_service
 
 
@@ -88,19 +96,16 @@ async def get_documents_service() -> DocumentsService:
         return _documents_service
 
 
-async def get_review_rule_snapshots_repository() -> ReviewRuleSnapshotsRepository:
-    global _review_rule_snapshots_repo
+async def get_storage_provider() -> LocalStorageProvider:
+    global _storage_provider
 
-    if _review_rule_snapshots_repo is not None:
-        return _review_rule_snapshots_repo
+    if _storage_provider is not None:
+        return _storage_provider
 
-    async with _review_rule_snapshots_repo_lock:
-        if _review_rule_snapshots_repo is not None:
-            return _review_rule_snapshots_repo
+    async with _storage_provider_lock:
+        if _storage_provider is not None:
+            return _storage_provider
 
-        db_client = SQLiteClient()
-        repo = ReviewRuleSnapshotsRepository(db_client)
-        await repo.init()
-        _review_rule_snapshots_repo = repo
-        return _review_rule_snapshots_repo
+        _storage_provider = LocalStorageProvider()
+        return _storage_provider
 

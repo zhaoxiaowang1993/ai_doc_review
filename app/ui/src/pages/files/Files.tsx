@@ -28,8 +28,9 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import pdfIcon from '../../assets/pdf.svg'
-import { deleteBlob, listBlobs, type LocalFileItem } from '../../services/storage'
 import { UploadModal } from '../../components/UploadModal'
+import { deleteDocument, listDocuments } from '../../services/api'
+import type { Document } from '../../types/rule'
 
 const useStyles = makeStyles({
   page: { maxWidth: '1200px', margin: '0 auto' },
@@ -211,15 +212,15 @@ function Files() {
   const classes = useStyles()
   const navigate = useNavigate()
 
-  const [fileList, setFileList] = useState<LocalFileItem[] | undefined>()
+  const [fileList, setFileList] = useState<Document[] | undefined>()
   const [error, setError] = useState<string | undefined>()
   const [dragOver, setDragOver] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string | undefined>()
+  const [deleteTarget, setDeleteTarget] = useState<Document | undefined>()
   const [deleting, setDeleting] = useState(false)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
 
   const openDocument = useCallback(
-    (filename: string) => navigate({ pathname: '/review', search: `?document=${filename}` }),
+    (docId: string) => navigate({ pathname: '/review', search: `?doc_id=${encodeURIComponent(docId)}` }),
     [navigate],
   )
 
@@ -229,7 +230,7 @@ function Files() {
   useEffect(() => {
     async function loadFileList() {
       try {
-        const files = await listBlobs()
+        const files = await listDocuments()
         setFileList(files)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
@@ -240,7 +241,7 @@ function Files() {
 
   async function refreshList() {
     try {
-      const files = await listBlobs()
+      const files = await listDocuments()
       setFileList(files)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -252,8 +253,8 @@ function Files() {
     setError(undefined)
     setDeleting(true)
     try {
-      await deleteBlob(deleteTarget)
-      const files = await listBlobs()
+      await deleteDocument(deleteTarget.id)
+      const files = await listDocuments()
       setFileList(files)
       setDeleteTarget(undefined)
     } catch (e) {
@@ -350,14 +351,14 @@ function Files() {
               <div className={classes.empty}>暂无文档，请上传 PDF 开始审核</div>
             )}
             {recentDocs.map((file) => (
-              <div key={file.name} className={classes.docCard}>
-                <div className={classes.docPreview} onClick={() => openDocument(file.name)}>
+              <div key={file.id} className={classes.docCard}>
+                <div className={classes.docPreview} onClick={() => openDocument(file.id)}>
                   <img className={classes.docIcon} src={pdfIcon} alt="PDF" />
                 </div>
-                <div className={classes.docInfo} onClick={() => openDocument(file.name)}>
-                  <div className={classes.docName}>{file.name}</div>
+                <div className={classes.docInfo} onClick={() => openDocument(file.id)}>
+                  <div className={classes.docName}>{file.display_name || file.original_filename}</div>
                   <div className={classes.docMeta}>
-                    {file.lastModified ? file.lastModified.toLocaleDateString() : '已上传'}
+                    已上传
                   </div>
                 </div>
                 <div className={classes.docActions}>
@@ -368,7 +369,7 @@ function Files() {
                     className={classes.deleteBtn}
                     onClick={(e) => {
                       e.stopPropagation()
-                      setDeleteTarget(file.name)
+                      setDeleteTarget(file)
                     }}
                   />
                 </div>
@@ -385,7 +386,7 @@ function Files() {
             <DialogTitle>确认删除</DialogTitle>
             <DialogContent>
               <div style={{ color: tokens.colorNeutralForeground2, fontSize: 14 }}>
-                确定要删除文档 <strong>{deleteTarget}</strong> 吗？此操作不可撤销。
+                确定要删除文档 <strong>{deleteTarget?.display_name || deleteTarget?.original_filename}</strong> 吗？此操作不可撤销。
               </div>
             </DialogContent>
             <DialogActions>
@@ -403,9 +404,9 @@ function Files() {
       <UploadModal
         open={uploadModalOpen}
         onClose={() => setUploadModalOpen(false)}
-        onSuccess={(filename) => {
+        onSuccess={(docId) => {
           refreshList()
-          openDocument(filename)
+          openDocument(docId)
         }}
       />
     </div>

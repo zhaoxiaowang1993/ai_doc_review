@@ -3,14 +3,14 @@ import { Modal, Upload, Button, message, Space } from 'antd'
 import { InboxOutlined } from '@ant-design/icons'
 import type { UploadFile, RcFile } from 'antd/es/upload/interface'
 import { DocumentCategorySelector } from './DocumentCategorySelector'
-import { uploadFile } from '../services/api'
+import { uploadDocument } from '../services/api'
 
 const { Dragger } = Upload
 
 interface UploadModalProps {
     open: boolean
     onClose: () => void
-    onSuccess?: (filename: string, docId: string | null) => void
+    onSuccess?: (docId: string) => void
 }
 
 /**
@@ -56,9 +56,9 @@ export function UploadModal({ open, onClose, onSuccess }: UploadModalProps) {
         setUploading(true)
         try {
             const file = fileList[0] as unknown as File
-            const result = await uploadFile(file, subtypeId)
+            const result = await uploadDocument(file, subtypeId)
             message.success('文件上传成功')
-            onSuccess?.(result.filename, result.doc_id)
+            onSuccess?.(result.doc_id)
             handleClose()
         } catch (error) {
             console.error('Upload failed:', error)

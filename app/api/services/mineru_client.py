@@ -33,7 +33,7 @@ class MinerUClient:
         self.poll_interval_sec = float(settings.mineru_poll_interval_sec)
         self.max_wait_sec = float(settings.mineru_max_wait_sec)
 
-    async def extract(self, file_path: Path) -> Dict[str, Any]:
+    async def extract(self, file_path: Path, *, data_id: str, cache_key: str) -> Dict[str, Any]:
         if not self.api_key:
             raise ValueError("MINERU_API_KEY is required.")
 
@@ -42,10 +42,9 @@ class MinerUClient:
 
         logging.info(f"Calling MinerU (v4) for file: {file_path}")
 
-        batch_id, upload_url = await self._request_upload_url(file_path.name)
+        batch_id, upload_url = await self._request_upload_url(file_path.name, data_id=data_id)
         await self._upload_file(upload_url, file_path)
         full_zip_url = await self._poll_batch_until_done(batch_id, file_path.name)
-        cache_key = _safe_stem(file_path.stem)
         payload, meta = await self._download_and_parse_zip(full_zip_url, cache_key)
         if settings.debug:
             try:
@@ -58,10 +57,11 @@ class MinerUClient:
                 logging.info(f"Saved MinerU parsed JSON to {out_path}")
             except Exception as e:
                 logging.warning(f"Failed to save MinerU debug JSON: {e}")
+        meta["cache_key"] = cache_key
         # Return both content and meta so downstream can do precise bbox mapping.
         return {"content": payload, "meta": meta}
 
-    async def _request_upload_url(self, file_name: str) -> tuple[str, str]:
+    async def _request_upload_url(self, file_name: str, *, data_id: str) -> tuple[str, str]:
         url = f"{self.base_url}/api/v4/file-urls/batch"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -69,7 +69,7 @@ class MinerUClient:
             "Accept": "*/*",
         }
         body = {
-            "files": [{"name": file_name, "data_id": file_name}],
+            "files": [{"name": file_name, "data_id": data_id}],
             "model_version": self.model_version,
         }
 

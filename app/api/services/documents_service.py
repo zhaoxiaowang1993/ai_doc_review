@@ -1,5 +1,5 @@
 from common.logger import get_logger
-from typing import Optional
+from typing import List, Optional
 from common.models import Document
 from database.documents_repository import DocumentsRepository
 from datetime import datetime, timezone
@@ -15,56 +15,45 @@ class DocumentsService:
         self.repository = repository
 
     async def create_document(
-        self, filename: str, subtype_id: str, doc_id: Optional[str] = None
+        self,
+        *,
+        owner_id: str,
+        original_filename: str,
+        display_name: str,
+        subtype_id: str,
+        storage_provider: str,
+        storage_key: str,
+        mime_type: str,
+        size_bytes: int,
+        sha256: str,
+        created_by: str,
+        doc_id: Optional[str] = None,
     ) -> Document:
-        """
-        创建新文档记录。
-
-        Args:
-            filename: 文件名
-            subtype_id: 文书子类 ID（决定审核时加载哪些规则）
-            doc_id: 可选的文档 ID，如果不提供则自动生成
-
-        Returns:
-            创建的 Document 对象
-        """
         document = Document(
             id=doc_id or str(uuid.uuid4()),
-            filename=filename,
+            owner_id=owner_id,
+            original_filename=original_filename,
+            display_name=display_name,
             subtype_id=subtype_id,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            storage_provider=storage_provider,
+            storage_key=storage_key,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            created_at_utc=datetime.now(timezone.utc).isoformat(),
+            created_by=created_by,
+            last_run_id=None,
         )
         return await self.repository.create(document)
 
-    async def get_document(self, doc_id: str) -> Optional[Document]:
-        """
-        根据文档 ID 获取文档。
+    async def get_document(self, doc_id: str, *, owner_id: str) -> Optional[Document]:
+        return await self.repository.get_by_id(doc_id, owner_id=owner_id)
 
-        Args:
-            doc_id: 文档 ID
+    async def list_documents(self, *, owner_id: str) -> List[Document]:
+        return await self.repository.list_by_owner(owner_id=owner_id)
 
-        Returns:
-            Document 对象，如果不存在则返回 None
-        """
-        return await self.repository.get_by_id(doc_id)
+    async def update_last_run_id(self, doc_id: str, *, owner_id: str, last_run_id: str | None) -> None:
+        await self.repository.update_last_run_id(doc_id, owner_id=owner_id, last_run_id=last_run_id)
 
-    async def get_document_by_filename(self, filename: str) -> Optional[Document]:
-        """
-        根据文件名获取文档。
-
-        Args:
-            filename: 文件名
-
-        Returns:
-            Document 对象，如果不存在则返回 None
-        """
-        return await self.repository.get_by_filename(filename)
-
-    async def delete_document(self, doc_id: str) -> None:
-        """
-        删除文档。
-
-        Args:
-            doc_id: 文档 ID
-        """
-        await self.repository.delete(doc_id)
+    async def delete_document(self, doc_id: str, *, owner_id: str) -> None:
+        await self.repository.delete(doc_id, owner_id=owner_id)

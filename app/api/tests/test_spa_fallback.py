@@ -1,6 +1,16 @@
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+API_DIR = Path(__file__).resolve().parents[1]
+APP_DIR = API_DIR.parent
+ROOT_DIR = APP_DIR.parent
+for p in (API_DIR, ROOT_DIR, APP_DIR):
+    p_str = str(p)
+    if p_str in sys.path:
+        sys.path.remove(p_str)
+    sys.path.insert(0, p_str)
 
 from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
@@ -43,4 +53,3 @@ class TestSPAFallback(unittest.TestCase):
 
             resp = client.get("/api/does-not-exist")
             self.assertEqual(resp.status_code, 404)
-

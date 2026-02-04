@@ -90,9 +90,18 @@ class ReviewRule(BaseModel):
 # ========== Document (文书元数据) ==========
 class Document(BaseModel):
     id: str
-    filename: str
-    subtype_id: str  # 关联到 DocumentSubtype，决定审核时加载哪些规则
-    created_at: str
+    owner_id: str
+    original_filename: str
+    display_name: str
+    subtype_id: str
+    storage_provider: str
+    storage_key: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    created_at_utc: str
+    created_by: str
+    last_run_id: Optional[str] = None
 
 
 class SingleShotIssue(BaseModel):
@@ -157,6 +166,9 @@ class DismissalFeedbackModel(BaseModel):
 class Issue(BaseModel):
     id: str
     doc_id: str
+    owner_id: str = ""
+    source_run_id: str = ""
+    source_issue_id: Optional[str] = None
     text: str
     type: str  # IssueType value or custom rule name
     status: IssueStatusEnum
@@ -170,6 +182,7 @@ class Issue(BaseModel):
     resolved_at_UTC: Optional[str] = None
     modified_fields: Optional[ModifiedFieldsModel] = None
     dismissal_feedback: Optional[DismissalFeedbackModel] = None
+    feedback: Optional[dict] = None
 
     class Config:
         use_enum_values = True

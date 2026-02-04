@@ -28,9 +28,9 @@ class HitlIssuesAgent:
     def __init__(self, *, model: BaseChatModel, issues_repository: IssuesRepository) -> None:
         self._repo = issues_repository
 
-        async def update_issue(issue_id: str, update_fields: Dict[str, Any]) -> str:
+        async def update_issue(owner_id: str, issue_id: str, update_fields: Dict[str, Any]) -> str:
             """Update a single issue in the database (requires human approval via HITL)."""
-            await self._repo.update_issue(issue_id, update_fields)
+            await self._repo.update_issue(issue_id, owner_id=owner_id, fields=update_fields)
             return "ok"
 
         # Create agent with HITL middleware and checkpointer
@@ -56,7 +56,7 @@ class HitlIssuesAgent:
         )
 
     async def start_update(
-        self, *, thread_id: str, issue_id: str, update_fields: Dict[str, Any]
+        self, *, thread_id: str, owner_id: str, issue_id: str, update_fields: Dict[str, Any]
     ) -> Dict[str, Any] | None:
         """
         Start a HITL-gated update. Returns the interrupt payload if execution was interrupted,
@@ -72,6 +72,7 @@ class HitlIssuesAgent:
         }
         prompt = (
             "请按照提供的参数更新 issue。\n"
+            f"owner_id: {owner_id}\n"
             f"issue_id: {issue_id}\n"
             f"update_fields(JSON): {json.dumps(update_fields, ensure_ascii=False)}\n"
             "你必须调用 update_issue。\n"
@@ -117,13 +118,14 @@ class HitlIssuesAgent:
                 return
             raise
 
-    async def get_issue(self, issue_id: str) -> Issue:
-        return await self._repo.get_issue(issue_id)
+    async def get_issue(self, issue_id: str, *, owner_id: str) -> Issue:
+        return await self._repo.get_issue(issue_id, owner_id=owner_id)
 
     async def apply_update_with_hitl(
         self,
         *,
         thread_id: str,
+        owner_id: str,
         issue_id: str,
         update_fields: Dict[str, Any],
         decision: Dict[str, Any] | None = None,
@@ -132,14 +134,14 @@ class HitlIssuesAgent:
         Convenience helper for APIs where the HTTP request itself represents the
         human decision, so we immediately resume with the provided decision (defaults to approve).
         """
-        interrupt = await self.start_update(thread_id=thread_id, issue_id=issue_id, update_fields=update_fields)
+        interrupt = await self.start_update(thread_id=thread_id, owner_id=owner_id, issue_id=issue_id, update_fields=update_fields)
         if interrupt is not None:
             await self.resume_update(
                 thread_id=thread_id,
                 interrupt_id=interrupt.get("id"),
                 decision=decision or {"type": "approve"},
             )
-        return await self.get_issue(issue_id)
+        return await self.get_issue(issue_id, owner_id=owner_id)
 
     async def _run_until_interrupt(self, inp: Dict[str, Any], *, config: Dict[str, Any]) -> Dict[str, Any] | None:
         try:
@@ -171,15 +173,17 @@ class HitlIssuesAgent:
                     content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
                     # Parse the issue_id and update_fields from the prompt
                     # The prompt format is: "请按照提供的参数更新 issue。\nissue_id: {issue_id}\nupdate_fields(JSON): {json}\n"
+                    owner_id_match = re.search(r"owner_id:\s*([^\n]+)", content)
                     issue_id_match = re.search(r"issue_id:\s*([^\n]+)", content)
                     update_fields_match = re.search(r"update_fields\(JSON\):\s*({.*?})\s*\n", content, re.DOTALL)
-                    if issue_id_match and update_fields_match:
+                    if owner_id_match and issue_id_match and update_fields_match:
+                        owner_id = owner_id_match.group(1).strip()
                         issue_id = issue_id_match.group(1).strip()
                         update_fields_str = update_fields_match.group(1)
                         try:
                             update_fields = json.loads(update_fields_str)
                             # Directly update the issue without HITL
-                            await self._repo.update_issue(issue_id, update_fields)
+                            await self._repo.update_issue(issue_id, owner_id=owner_id, fields=update_fields)
                             # Return None to indicate no interrupt (update completed)
                             return None
                         except json.JSONDecodeError:

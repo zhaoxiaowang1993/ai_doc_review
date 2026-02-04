@@ -9,18 +9,71 @@ except ModuleNotFoundError:
     sys.modules['sqlite3'] = sqlite3
 
 import aiosqlite
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from pathlib import Path
 from config.config import settings
 
 
 logging = get_logger(__name__)
 
+async def _table_columns(db: aiosqlite.Connection, table: str) -> Sequence[str]:
+    cursor = await db.execute(f"PRAGMA table_info({table})")
+    rows = await cursor.fetchall()
+    return [r[1] for r in rows] if rows else []
+
+
+async def _validate_or_raise(db: aiosqlite.Connection) -> None:
+    expected: dict[str, set[str]] = {
+        "documents": {
+            "id",
+            "owner_id",
+            "original_filename",
+            "display_name",
+            "subtype_id",
+            "storage_provider",
+            "storage_key",
+            "mime_type",
+            "size_bytes",
+            "sha256",
+            "created_at_utc",
+            "created_by",
+            "last_run_id",
+        },
+        "issues": {
+            "id",
+            "owner_id",
+            "document_id",
+            "source_run_id",
+            "source_issue_id",
+            "type",
+            "status",
+            "text",
+            "explanation",
+            "suggested_fix",
+            "risk_level",
+            "location",
+            "review_initiated_by",
+            "review_initiated_at_UTC",
+            "resolved_by",
+            "resolved_at_UTC",
+            "modified_fields",
+            "dismissal_feedback",
+            "feedback",
+        },
+    }
+    for table, cols in expected.items():
+        existing = set(await _table_columns(db, table))
+        if existing and not cols.issubset(existing):
+            raise RuntimeError(f"检测到旧版数据库表结构（{table}），请先运行 clean_local_data.py 清理本地数据后重试。")
+
 
 CREATE_ISSUES_TABLE = """
 CREATE TABLE IF NOT EXISTS issues (
     id TEXT PRIMARY KEY,
-    doc_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    source_run_id TEXT NOT NULL,
+    source_issue_id TEXT,
     type TEXT NOT NULL,
     status TEXT NOT NULL,
     text TEXT NOT NULL,
@@ -35,6 +88,43 @@ CREATE TABLE IF NOT EXISTS issues (
     modified_fields TEXT,
     dismissal_feedback TEXT,
     feedback TEXT
+);
+"""
+
+CREATE_ANALYSIS_RUNS_TABLE = """
+CREATE TABLE IF NOT EXISTS analysis_runs (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    subtype_id TEXT NOT NULL,
+    rules_fingerprint TEXT NOT NULL,
+    rules_snapshot_json TEXT NOT NULL,
+    pipeline_version TEXT NOT NULL,
+    mineru_cache_key TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_message TEXT
+);
+"""
+
+CREATE_ANALYSIS_RUNS_INDEXES = """
+CREATE UNIQUE INDEX IF NOT EXISTS ux_analysis_runs_key
+ON analysis_runs(owner_id, sha256, rules_fingerprint, pipeline_version);
+"""
+
+CREATE_ANALYSIS_ISSUES_TABLE = """
+CREATE TABLE IF NOT EXISTS analysis_issues (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    text TEXT NOT NULL,
+    explanation TEXT,
+    suggested_fix TEXT,
+    risk_level TEXT,
+    location_json TEXT,
+    para_index INTEGER,
+    created_at_utc TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES analysis_runs(id)
 );
 """
 
@@ -57,9 +147,18 @@ CREATE TABLE IF NOT EXISTS rules (
 CREATE_DOCUMENTS_TABLE = """
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
-    filename TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    display_name TEXT NOT NULL,
     subtype_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
+    storage_provider TEXT NOT NULL,
+    storage_key TEXT NOT NULL UNIQUE,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    last_run_id TEXT,
     FOREIGN KEY (subtype_id) REFERENCES document_subtypes(id)
 );
 """
@@ -100,16 +199,6 @@ CREATE TABLE IF NOT EXISTS rule_type_relations (
 );
 """
 
-CREATE_REVIEW_RULE_SNAPSHOTS_TABLE = """
-CREATE TABLE IF NOT EXISTS review_rule_snapshots (
-    doc_id TEXT PRIMARY KEY,
-    reviewed_at_UTC TEXT NOT NULL,
-    subtype_id TEXT,
-    rules_snapshot TEXT NOT NULL,
-    rules_fingerprint TEXT NOT NULL
-);
-"""
-
 
 class SQLiteClient:
     def __init__(self, db_path: str | None = None) -> None:
@@ -118,48 +207,24 @@ class SQLiteClient:
 
     async def init_db(self) -> None:
         async with aiosqlite.connect(self.db_path) as db:
+            await _validate_or_raise(db)
             await db.execute(CREATE_ISSUES_TABLE)
+            await db.execute("CREATE INDEX IF NOT EXISTS ix_issues_owner_doc ON issues(owner_id, document_id)")
+            await db.execute("CREATE INDEX IF NOT EXISTS ix_issues_source_run ON issues(source_run_id)")
+            await db.execute(CREATE_ANALYSIS_RUNS_TABLE)
+            await db.execute(CREATE_ANALYSIS_RUNS_INDEXES)
+            await db.execute("CREATE INDEX IF NOT EXISTS ix_analysis_runs_owner_sha ON analysis_runs(owner_id, sha256)")
+            await db.execute(CREATE_ANALYSIS_ISSUES_TABLE)
+            await db.execute("CREATE INDEX IF NOT EXISTS ix_analysis_issues_run ON analysis_issues(run_id)")
             await db.execute(CREATE_RULES_TABLE)
             await db.execute(CREATE_DOCUMENTS_TABLE)
+            await db.execute("CREATE INDEX IF NOT EXISTS ix_documents_owner ON documents(owner_id)")
+            await db.execute("CREATE INDEX IF NOT EXISTS ix_documents_owner_sha ON documents(owner_id, sha256)")
             await db.execute(CREATE_DOCUMENT_TYPES_TABLE)
             await db.execute(CREATE_DOCUMENT_SUBTYPES_TABLE)
             await db.execute(CREATE_RULE_SUBTYPE_RELATIONS_TABLE)
             await db.execute(CREATE_RULE_TYPE_RELATIONS_TABLE)
-            await db.execute(CREATE_REVIEW_RULE_SNAPSHOTS_TABLE)
             await db.commit()
-            
-            # Migration: Add risk_level column to existing issues table if not exists
-            try:
-                await db.execute("ALTER TABLE issues ADD COLUMN risk_level TEXT")
-                await db.commit()
-                logging.info("Migration: Added risk_level column to issues table")
-            except Exception:
-                # Column already exists, ignore
-                pass
-
-            # Migration: Add rule_type column to existing rules table if not exists
-            try:
-                await db.execute("ALTER TABLE rules ADD COLUMN rule_type TEXT NOT NULL DEFAULT 'applicable'")
-                await db.commit()
-                logging.info("Migration: Added rule_type column to rules table")
-            except Exception:
-                pass
-
-            # Migration: Add source column to existing rules table if not exists
-            try:
-                await db.execute("ALTER TABLE rules ADD COLUMN source TEXT NOT NULL DEFAULT 'custom'")
-                await db.commit()
-                logging.info("Migration: Added source column to rules table")
-            except Exception:
-                pass
-
-            # Migration: Add is_universal column to existing rules table if not exists
-            try:
-                await db.execute("ALTER TABLE rules ADD COLUMN is_universal INTEGER NOT NULL DEFAULT 0")
-                await db.commit()
-                logging.info("Migration: Added is_universal column to rules table")
-            except Exception:
-                pass
 
             # Seed initial document types if empty
             cursor = await db.execute("SELECT COUNT(*) FROM document_types")
@@ -308,15 +373,16 @@ class SQLiteClient:
             await db.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
             await db.commit()
 
-    async def delete_items_by_values(self, table: str, filters: Dict[str, Any]) -> None:
+    async def delete_items_by_values(self, table: str, filters: Dict[str, Any]) -> int:
         if not filters:
-            return
+            return 0
         clauses = [f"{col} = ?" for col in filters.keys()]
         where = " AND ".join(clauses)
         params = list(filters.values())
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(f"DELETE FROM {table} WHERE {where}", params)
+            cursor = await db.execute(f"DELETE FROM {table} WHERE {where}", params)
             await db.commit()
+            return cursor.rowcount or 0
 
     async def execute_query(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
         async with aiosqlite.connect(self.db_path) as db:

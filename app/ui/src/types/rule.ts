@@ -58,9 +58,18 @@ export interface ReviewRulesState {
 
 export interface Document {
   id: string
-  filename: string
-  subtype_id: string  // 关联到 DocumentSubtype，决定审核时加载哪些规则
-  created_at: string
+  owner_id: string
+  original_filename: string
+  display_name: string
+  subtype_id: string
+  storage_provider: string
+  storage_key: string
+  mime_type: string
+  size_bytes: number
+  sha256: string
+  created_at_utc: string
+  created_by: string
+  last_run_id?: string | null
 }
 
 export interface CreateRuleRequest {

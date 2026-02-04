@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
 from http import HTTPStatus
-from pathlib import Path
 from uuid import uuid4
-from dependencies import get_documents_service, get_issues_service, get_rules_service, get_review_rule_snapshots_repository
+from dependencies import get_documents_service, get_issues_service, get_rules_service, get_storage_provider
 from common.logger import get_logger
 import json
 from typing import Any, Dict, List, Literal, Optional
@@ -15,9 +14,9 @@ from security.auth import validate_authenticated
 from common.models import Issue, ModifiedFieldsModel, DismissalFeedbackModel, IssueStatusEnum
 from config.config import settings
 from pydantic import BaseModel
-from database.review_rule_snapshots_repository import ReviewRuleSnapshotsRepository
 from services.rules_fingerprint import build_review_rules_snapshot_items, compute_review_rules_fingerprint
 from common.models import RiskLevel
+from services.storage_provider import LocalStorageProvider
 
 
 router = APIRouter()
@@ -71,16 +70,27 @@ async def get_review_rules_state(
     user=Depends(validate_authenticated),
     rules_service: RulesService = Depends(get_rules_service),
     documents_service: DocumentsService = Depends(get_documents_service),
-    review_rule_snapshots_repository: ReviewRuleSnapshotsRepository = Depends(get_review_rule_snapshots_repository),
+    issues_service: IssuesService = Depends(get_issues_service),
 ) -> ReviewRulesStateResponse:
-    document = await documents_service.get_document(doc_id)
+    document = await documents_service.get_document(doc_id, owner_id=user.oid)
     subtype_id = document.subtype_id if document else None
 
     latest_rules = await rules_service.get_rules_for_review(subtype_id) if subtype_id else []
     latest_rule_ids = [r.id for r in latest_rules]
     latest_fingerprint = compute_review_rules_fingerprint(latest_rules)
 
-    snapshot_row = await review_rule_snapshots_repository.get_by_doc_id(doc_id)
+    run_id = document.last_run_id if document else None
+    if not run_id:
+        run_id = await issues_service.issues_repository.get_distinct_source_run_id_for_doc(doc_id, owner_id=user.oid)
+    if not run_id:
+        return ReviewRulesStateResponse(
+            snapshot_rules=build_review_rules_snapshot_items(latest_rules),
+            snapshot_reviewed_at_UTC=None,
+            latest_rule_ids=latest_rule_ids,
+            rules_changed_since_review=False,
+        )
+
+    snapshot_row = await issues_service.analysis_runs_repository.get_by_id(run_id, owner_id=user.oid)
     if not snapshot_row:
         return ReviewRulesStateResponse(
             snapshot_rules=build_review_rules_snapshot_items(latest_rules),
@@ -90,7 +100,7 @@ async def get_review_rules_state(
         )
 
     try:
-        snapshot_rules = json.loads(snapshot_row.get("rules_snapshot") or "[]")
+        snapshot_rules = json.loads(snapshot_row.get("rules_snapshot_json") or "[]")
     except Exception:
         snapshot_rules = []
 
@@ -98,7 +108,7 @@ async def get_review_rules_state(
 
     return ReviewRulesStateResponse(
         snapshot_rules=snapshot_rules,
-        snapshot_reviewed_at_UTC=snapshot_row.get("reviewed_at_UTC"),
+        snapshot_reviewed_at_UTC=snapshot_row.get("created_at_utc"),
         latest_rule_ids=latest_rule_ids,
         rules_changed_since_review=(snapshot_fingerprint != latest_fingerprint),
     )
@@ -120,13 +130,13 @@ async def get_pdf_issues(
     issues_service: IssuesService = Depends(get_issues_service),
     rules_service: RulesService = Depends(get_rules_service),
     documents_service: DocumentsService = Depends(get_documents_service),
-    review_rule_snapshots_repository: ReviewRuleSnapshotsRepository = Depends(get_review_rule_snapshots_repository),
+    storage: LocalStorageProvider = Depends(get_storage_provider),
 ) -> StreamingResponse:
     """
     Retrieve issues related to the document.
 
     Args:
-        doc_id (str): The filename of the document
+        doc_id (str): The id of the document
         force (bool): If true, delete existing issues and re-run review
         rule_ids (List[str]): Optional list of rule IDs to use for review
         user (Depends): The authenticated user.
@@ -137,12 +147,12 @@ async def get_pdf_issues(
     logging.info(f"Received initiate review request for document {doc_id}")
 
     try:
-        stored_issues = await issues_service.get_issues_data(doc_id)
+        stored_issues = await issues_service.get_issues_data(doc_id, owner_id=user.oid)
 
         # If force=true, delete existing issues and re-run
         if force and stored_issues:
             logging.info(f"Force re-review requested. Deleting {len(stored_issues)} existing issues for {doc_id}")
-            await issues_service.issues_repository.delete_issues_by_doc(doc_id)
+            await issues_service.issues_repository.delete_issues_by_doc(doc_id, owner_id=user.oid)
             stored_issues = []
 
         if stored_issues:
@@ -157,34 +167,45 @@ async def get_pdf_issues(
         else:
             logging.info(f"No issues found for document {doc_id}. Initiating review...")
             date_time = datetime.now(timezone.utc)
-            pdf_path = Path(settings.local_docs_dir) / doc_id
-            if not pdf_path.exists():
+            document = await documents_service.get_document(doc_id, owner_id=user.oid)
+            if not document:
+                raise HTTPException(status_code=404, detail="Document not found")
+            try:
+                pdf_path = storage.open(document.storage_key)
+            except FileNotFoundError:
                 raise HTTPException(status_code=404, detail="Document not found on server")
 
             custom_rules = None
-            subtype_id: str | None = None
             if rule_ids:
                 custom_rules = await rules_service.get_rules_by_ids(rule_ids)
                 logging.info(f"Using {len(custom_rules)} custom rules for review")
             else:
-                document = await documents_service.get_document(doc_id)
                 if not document or not document.subtype_id:
                     raise HTTPException(status_code=400, detail="缺失文档分类信息，请重新上传并选择文书分类。")
-                subtype_id = document.subtype_id
                 custom_rules = await rules_service.get_rules_for_review(document.subtype_id)
                 logging.info(f"Loaded {len(custom_rules)} rules for review (subtype_id={document.subtype_id})")
 
             snapshot_items = build_review_rules_snapshot_items(custom_rules or [])
             snapshot_fingerprint = compute_review_rules_fingerprint(custom_rules or [])
-            await review_rule_snapshots_repository.upsert(
-                doc_id=doc_id,
-                reviewed_at_UTC=date_time.isoformat(),
-                subtype_id=subtype_id,
-                rules_snapshot=json.dumps(snapshot_items, ensure_ascii=False, separators=(",", ":")),
-                rules_fingerprint=snapshot_fingerprint,
-            )
+            rules_snapshot_json = json.dumps(snapshot_items, ensure_ascii=False, separators=(",", ":"))
+            pipeline_version = f"deepseek:{settings.deepseek_model}|mineru:{settings.mineru_model_version}|pagination:{settings.pagination}"
+            if force:
+                pipeline_version = f"{pipeline_version}|force:{uuid4()}"
 
-            issues_stream = issues_service.initiate_review(str(pdf_path), user, date_time, custom_rules)
+            issues_stream = issues_service.initiate_review(
+                document_id=doc_id,
+                owner_id=user.oid,
+                subtype_id=document.subtype_id,
+                pdf_path=str(pdf_path),
+                user=user,
+                time_stamp=date_time,
+                rules_snapshot_json=rules_snapshot_json,
+                rules_fingerprint=snapshot_fingerprint,
+                pipeline_version=pipeline_version,
+                mineru_cache_key=document.sha256,
+                force=force,
+                custom_rules=custom_rules,
+            )
 
             async def issues_events():
                 try:
@@ -310,7 +331,7 @@ async def dismiss_issue(
 async def provide_feedback(
     doc_id: str,
     issue_id: str,
-    dismissal_feedback: DismissalFeedbackModel,
+    dismissal_feedback: Optional[DismissalFeedbackModel] = None,
     user=Depends(validate_authenticated),
     issues_service: IssuesService = Depends(get_issues_service),
 ) -> Issue:
@@ -328,7 +349,7 @@ async def provide_feedback(
         IssueModel: The updated issue.
     """
     logging.info(f"Request received to provide feedback on issue {issue_id} on document {doc_id}.")
-    updated_issue = await issues_service.add_feedback(issue_id, dismissal_feedback)
+    updated_issue = await issues_service.add_feedback(issue_id, user, dismissal_feedback)
     logging.info(f"Issue {issue_id} updated successfully.")
     return updated_issue
 
@@ -405,7 +426,6 @@ async def resume_issue_hitl(
     issues_service: IssuesService = Depends(get_issues_service),
 ) -> Issue:
     del doc_id
-    del user
 
     decision = body.decision or {"type": "approve"}
 
@@ -415,6 +435,7 @@ async def resume_issue_hitl(
         if edited_action.get("name") and edited_action.get("name") != "update_issue":
             raise HTTPException(status_code=400, detail="仅允许编辑 update_issue 工具调用。")
         args = edited_action.get("args") or {}
+        args["owner_id"] = user.oid
         args["issue_id"] = issue_id
         edited_action["name"] = "update_issue"
         edited_action["args"] = args
@@ -425,4 +446,4 @@ async def resume_issue_hitl(
         interrupt_id=body.interrupt_id,
         decision=decision,
     )
-    return await issues_service.hitl.get_issue(issue_id)
+    return await issues_service.hitl.get_issue(issue_id, owner_id=user.oid)

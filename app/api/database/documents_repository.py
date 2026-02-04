@@ -1,5 +1,5 @@
 from common.logger import get_logger
-from typing import Optional
+from typing import List, Optional
 from common.models import Document
 from database.db_client import SQLiteClient
 
@@ -22,23 +22,38 @@ class DocumentsRepository:
         logging.info(f"Created document: {document.id}")
         return document
 
-    async def get_by_id(self, doc_id: str) -> Optional[Document]:
-        """根据 ID 获取文档"""
-        item = await self.db_client.retrieve_item_by_id("documents", doc_id)
-        if item is None:
-            return None
-        return Document(**item)
-
-    async def get_by_filename(self, filename: str) -> Optional[Document]:
-        """根据文件名获取文档（用于文件上传后查找）"""
-        items = await self.db_client.retrieve_items_by_values(
-            "documents", {"filename": filename}
+    async def get_by_id(self, doc_id: str, *, owner_id: str) -> Optional[Document]:
+        rows = await self.db_client.execute_query(
+            "SELECT * FROM documents WHERE id = ? AND owner_id = ?",
+            (doc_id, owner_id),
         )
-        if not items:
+        if not rows:
             return None
-        return Document(**items[0])
+        return Document(**rows[0])
 
-    async def delete(self, doc_id: str) -> None:
-        """删除文档"""
-        await self.db_client.delete_item("documents", doc_id)
+    async def list_by_owner(self, *, owner_id: str) -> List[Document]:
+        rows = await self.db_client.execute_query(
+            "SELECT * FROM documents WHERE owner_id = ? ORDER BY created_at_utc DESC",
+            (owner_id,),
+        )
+        return [Document(**r) for r in rows]
+
+    async def update_last_run_id(self, doc_id: str, *, owner_id: str, last_run_id: str | None) -> None:
+        rows = await self.db_client.execute_query(
+            "SELECT * FROM documents WHERE id = ? AND owner_id = ?",
+            (doc_id, owner_id),
+        )
+        if not rows:
+            raise ValueError(f"Document {doc_id} not found.")
+        row = dict(rows[0])
+        row["last_run_id"] = last_run_id
+        await self.db_client.store_item("documents", row)
+
+    async def delete(self, doc_id: str, *, owner_id: str) -> None:
+        deleted = await self.db_client.delete_items_by_values(
+            "documents",
+            {"id": doc_id, "owner_id": owner_id},
+        )
+        if deleted == 0:
+            raise ValueError(f"Document {doc_id} not found.")
         logging.info(f"Deleted document: {doc_id}")

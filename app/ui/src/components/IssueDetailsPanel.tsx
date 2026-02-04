@@ -95,7 +95,7 @@ export function IssueDetailsPanel({
     setError(undefined)
     try {
       setSubmittingFeedback(true)
-      await callApi(`${docId}/issues/${current.id}/feedback`, 'PATCH', feedback)
+      await callApi(`${docId}/issues/${current.id}/feedback`, 'PATCH', feedback ?? {})
       setFeedbackOpen(false)
       message.success('操作成功')
     } catch (e) {

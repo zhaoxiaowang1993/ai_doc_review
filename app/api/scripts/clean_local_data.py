@@ -27,9 +27,10 @@ def main() -> None:
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
 
+    local_root = _resolve_from_api_dir(settings.local_docs_dir)
     targets = [
         _resolve_from_api_dir(settings.sqlite_path),
-        _resolve_from_api_dir(settings.local_docs_dir),
+        (local_root / "objects").resolve(),
         _resolve_from_api_dir(settings.mineru_cache_dir),
     ]
 

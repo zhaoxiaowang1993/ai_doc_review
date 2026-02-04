@@ -132,13 +132,16 @@ class LangChainPipeline:
 
     async def stream_issues(
         self,
+        *,
+        doc_id: str,
         pdf_path: str,
         user_id: str,
         timestamp_iso: str,
+        cache_key: str,
         custom_rules: List[ReviewRule] | None = None,
     ) -> AsyncGenerator[List[Issue], None]:
         """End-to-end: MinerU parse -> chunk -> LLM -> yield Issue list per chunk."""
-        payload = await self.mineru.extract(Path(pdf_path))
+        payload = await self.mineru.extract(Path(pdf_path), data_id=doc_id, cache_key=cache_key)
         meta = payload.get("meta") if isinstance(payload, dict) else None
         paragraphs = self.mineru.to_paragraphs(payload)
         doc_name = Path(pdf_path).name
@@ -152,7 +155,7 @@ class LangChainPipeline:
 
         page_sizes = _get_pdf_page_sizes(pdf_path)
         page_bbox_space = _get_page_bbox_space(paragraphs)
-        layout = _load_mineru_layout(meta, Path(pdf_path).stem)
+        layout = _load_mineru_layout(meta, cache_key)
 
         chunks = self._chunk_paragraphs(paragraphs, settings.pagination)
         logging.info(f"Chunk count: {len(chunks)} (pagination={settings.pagination})")
@@ -162,6 +165,7 @@ class LangChainPipeline:
                 chunk_index,
                 user_id,
                 timestamp_iso,
+                doc_id,
                 doc_name,
                 pdf_path,
                 page_sizes,
@@ -216,6 +220,7 @@ class LangChainPipeline:
         chunk_index: int,
         user_id: str,
         timestamp_iso: str,
+        doc_id: str,
         doc_name: str,
         pdf_path: str,
         page_sizes: Dict[int, tuple[float, float]],
@@ -306,7 +311,7 @@ class LangChainPipeline:
             issues.append(
                 Issue(
                     id=str(uuid.uuid4()),
-                    doc_id=doc_name,
+                    doc_id=doc_id,
                     text=(raw.text if isinstance(raw, ReviewIssue) else para["content"][:120]),
                     type=issue_type,
                     status=IssueStatusEnum.not_reviewed,
@@ -475,7 +480,7 @@ def _init_deepseek_model():
         )
 
 
-def _load_mineru_layout(meta: Dict[str, Any] | None, pdf_stem: str) -> Dict[str, Any] | None:
+def _load_mineru_layout(meta: Dict[str, Any] | None, cache_key: str) -> Dict[str, Any] | None:
     """
     Load MinerU layout.json (line/span-level bboxes) for better highlights on PDFs without text layer.
     Prefer cached `layout_path` from MinerU meta; fall back to cache dir lookup.
@@ -487,13 +492,6 @@ def _load_mineru_layout(meta: Dict[str, Any] | None, pdf_stem: str) -> Dict[str,
             if isinstance(lp, str) and lp:
                 layout_path = Path(lp)
         if not layout_path:
-            cache_key = None
-            if isinstance(meta, dict):
-                ck = meta.get("cache_key")
-                if isinstance(ck, str) and ck:
-                    cache_key = ck
-            if not cache_key:
-                cache_key = "".join([c if c.isalnum() or c in ("-", "_") else "_" for c in pdf_stem])
             layout_path = Path(settings.mineru_cache_dir) / f"{cache_key}.layout.json"
         if not layout_path.exists():
             return None

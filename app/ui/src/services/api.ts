@@ -4,6 +4,7 @@ import type {
   ReviewRule, CreateRuleRequest, UpdateRuleRequest,
   DocumentTypeWithSubtypes, Document, ReviewRulesState
 } from '../types/rule'
+import type { Issue } from '../types/issue'
 
 function normalizeApiOrigin(value: unknown): string {
   if (!value || typeof value !== 'string') return ''
@@ -19,7 +20,6 @@ function normalizeApiOrigin(value: unknown): string {
 const apiOrigin = normalizeApiOrigin(import.meta.env.VITE_API_ORIGIN)
 const apiBaseUrl = `${apiOrigin}/api/v1/review/`
 const rulesApiUrl = `${apiOrigin}/api/v1/rules`
-const filesApiUrl = `${apiOrigin}/api/v1/files`
 const documentsApiUrl = `${apiOrigin}/api/v1/documents`
 const documentTypesApiUrl = `${apiOrigin}/api/v1/document-types`
 const unknownError = '发生未知错误，请稍后重试。'
@@ -240,32 +240,16 @@ export async function getDocument(docId: string): Promise<Document> {
   return response.json()
 }
 
-export interface UploadFileResponse {
-  filename: string
-  doc_id: string | null
-  subtype_id: string | null
+export interface UploadDocumentResponse {
+  doc_id: string
+  original_filename: string
+  display_name: string
+  subtype_id: string
+  created_at_utc: string
 }
 
-export async function uploadFile(file: File, subtypeId?: string): Promise<UploadFileResponse> {
-  const formData = new FormData()
-  formData.append('file', file)
-  if (subtypeId) {
-    formData.append('subtype_id', subtypeId)
-  }
-
-  const response = await fetch(`${filesApiUrl}/upload`, {
-    method: 'POST',
-    body: formData
-  })
-  if (!response.ok) {
-    const message = await getErrorMessage(response)
-    throw new FatalError(message)
-  }
-  return response.json()
-}
-
-export async function getFiles(): Promise<string[]> {
-  const response = await fetch(filesApiUrl, {
+export async function listDocuments(): Promise<Document[]> {
+  const response = await fetch(`${documentsApiUrl}`, {
     headers: { 'Content-Type': 'application/json' },
     method: 'GET'
   })
@@ -276,13 +260,53 @@ export async function getFiles(): Promise<string[]> {
   return response.json()
 }
 
-export async function deleteFile(filename: string): Promise<void> {
-  const response = await fetch(`${filesApiUrl}/${filename}`, {
+export async function uploadDocument(file: File, subtypeId: string): Promise<UploadDocumentResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('subtype_id', subtypeId)
+
+  const response = await fetch(`${documentsApiUrl}`, {
+    method: 'POST',
+    body: formData
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function deleteDocument(docId: string): Promise<void> {
+  const response = await fetch(`${documentsApiUrl}/${encodeURIComponent(docId)}`, {
     method: 'DELETE'
   })
   if (!response.ok) {
     const message = await getErrorMessage(response)
     throw new FatalError(message)
   }
+}
+
+export async function downloadDocumentFile(docId: string): Promise<Blob> {
+  const response = await fetch(`${documentsApiUrl}/${encodeURIComponent(docId)}/file`, {
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.blob()
+}
+
+export async function getDocumentIssues(docId: string): Promise<Issue[]> {
+  const response = await fetch(`${documentsApiUrl}/${encodeURIComponent(docId)}/issues`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (response.status === 404) return []
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
 }
 

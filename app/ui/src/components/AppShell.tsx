@@ -13,6 +13,7 @@ import {
 import { PropsWithChildren, useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import logo from '../assets/landing/logo.svg'
+import { getDocument } from '../services/api'
 
 type AppShellProps = PropsWithChildren<{}>
 
@@ -260,11 +261,25 @@ export function AppShell({ children }: AppShellProps) {
     return '文档库'
   }, [location.pathname])
 
-  const reviewDocTitle = useMemo(() => {
-    if (location.pathname !== '/review') return undefined
-    const raw = new URLSearchParams(location.search).get('document') ?? undefined
-    if (!raw) return '未命名文书'
-    return raw.replace(/\.pdf$/i, '')
+  const [reviewDocTitle, setReviewDocTitle] = useState<string>('未命名文书')
+
+  useEffect(() => {
+    if (location.pathname !== '/review') return
+    const docId = new URLSearchParams(location.search).get('doc_id') ?? undefined
+    if (!docId) {
+      setReviewDocTitle('未命名文书')
+      return
+    }
+    setReviewDocTitle('文档')
+    ;(async () => {
+      try {
+        const doc = await getDocument(docId)
+        const name = (doc.display_name || doc.original_filename || '文档').replace(/\.pdf$/i, '')
+        setReviewDocTitle(name)
+      } catch {
+        setReviewDocTitle('文档')
+      }
+    })()
   }, [location.pathname, location.search])
 
   return (
