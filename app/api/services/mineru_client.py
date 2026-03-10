@@ -4,6 +4,8 @@ import json
 import asyncio
 import time
 import zipfile
+import re
+import html
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -68,10 +70,10 @@ class MinerUClient:
             "Content-Type": "application/json",
             "Accept": "*/*",
         }
-        body = {
-            "files": [{"name": file_name, "data_id": data_id}],
-            "model_version": self.model_version,
-        }
+        file_obj: Dict[str, Any] = {"name": file_name, "data_id": data_id}
+        if bool(getattr(settings, "mineru_is_ocr", False)):
+            file_obj["is_ocr"] = True
+        body = {"files": [file_obj], "model_version": self.model_version}
 
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(url, headers=headers, json=body)
@@ -158,11 +160,29 @@ class MinerUClient:
                 meta["page_canvas_sizes"] = page_canvas_sizes
 
             # Also try to derive canvas sizes from layout.json (works when zip has no rendered images).
-            layout_name = next((n for n in zf.namelist() if n.lower().endswith("layout.json")), None)
-            if layout_name:
+            layout_raw = None
+            layout_file = None
+
+            middle_name = next((n for n in zf.namelist() if n.lower().endswith("middle.json")), None)
+            if middle_name:
                 try:
-                    raw = zf.read(layout_name)
-                    layout = json.loads(raw.decode("utf-8"))
+                    layout_raw = zf.read(middle_name)
+                    layout_file = middle_name
+                except Exception as e:
+                    logging.warning(f"Failed to read MinerU middle.json: {e}")
+
+            if layout_raw is None:
+                layout_name = next((n for n in zf.namelist() if n.lower().endswith("layout.json")), None)
+                if layout_name:
+                    try:
+                        layout_raw = zf.read(layout_name)
+                        layout_file = layout_name
+                    except Exception as e:
+                        logging.warning(f"Failed to read MinerU layout.json: {e}")
+
+            if layout_raw is not None and layout_file:
+                try:
+                    layout = json.loads(layout_raw.decode("utf-8"))
                     sizes = _extract_page_canvas_sizes_from_layout(layout)
                     if sizes:
                         meta["page_canvas_sizes"] = {**meta.get("page_canvas_sizes", {}), **sizes}
@@ -170,11 +190,11 @@ class MinerUClient:
                         out_dir = Path(settings.mineru_cache_dir)
                         out_dir.mkdir(parents=True, exist_ok=True)
                         layout_path = out_dir / f"{cache_key}.layout.json"
-                        layout_path.write_bytes(raw)
+                        layout_path.write_bytes(layout_raw)
                         meta["layout_path"] = str(layout_path)
-                        meta["layout_file"] = layout_name
+                        meta["layout_file"] = layout_file
                 except Exception as e:
-                    logging.warning(f"Failed to parse/cache MinerU layout.json: {e}")
+                    logging.warning(f"Failed to parse/cache MinerU layout-like JSON: {e}")
 
             # Prefer likely structured outputs
             preferred = []
@@ -232,6 +252,9 @@ class MinerUClient:
         if not isinstance(payload, dict):
             return paragraphs
 
+        if isinstance(payload.get("pdf_info"), list):
+            return _paragraphs_from_middle_json(payload, meta=meta)
+
         pages = payload.get("pages") or (payload.get("data") or {}).get("pages") or []
         if isinstance(pages, dict):
             pages = pages.get("pages") or pages.get("items") or []
@@ -261,6 +284,7 @@ class MinerUClient:
                         "bbox": bbox,
                         "page_height": page_height,
                         "canvas_size": canvas,
+                        "block_type": block.get("type"),
                     }
                 )
 
@@ -276,10 +300,67 @@ class MinerUClient:
                         "bbox": para.get("bbox") or para.get("bounding_box"),
                         "page_height": para.get("page_height"),
                         "canvas_size": None,
+                        "block_type": para.get("type"),
                     }
                 )
 
         return paragraphs
+
+
+def _paragraphs_from_middle_json(payload: Dict[str, Any], *, meta: Dict[str, Any] | None) -> List[Dict[str, Any]]:
+    paragraphs: List[Dict[str, Any]] = []
+    pdf_info = payload.get("pdf_info") or []
+    if not isinstance(pdf_info, list):
+        return paragraphs
+    for page in pdf_info:
+        if not isinstance(page, dict):
+            continue
+        page_idx = page.get("page_idx")
+        page_num = (int(page_idx) + 1) if page_idx is not None else 1
+        page_size = page.get("page_size")
+        canvas = None
+        if meta and "page_canvas_sizes" in meta:
+            canvas = meta["page_canvas_sizes"].get(str(page_num))  # type: ignore[union-attr]
+        blocks = page.get("para_blocks") or []
+        if not isinstance(blocks, list):
+            continue
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            b_type = b.get("type")
+            lines = b.get("lines") or []
+            if not isinstance(lines, list) or not lines:
+                continue
+            text_parts: list[str] = []
+            for ln in lines:
+                if not isinstance(ln, dict):
+                    continue
+                spans = ln.get("spans") or []
+                if not isinstance(spans, list):
+                    continue
+                for sp in spans:
+                    if not isinstance(sp, dict):
+                        continue
+                    c = sp.get("content")
+                    if isinstance(c, str) and c.strip():
+                        text_parts.append(c)
+            text = _fix_mojibake("".join(text_parts)).strip()
+            if not text:
+                continue
+            bbox = b.get("bbox")
+            if not isinstance(bbox, list):
+                continue
+            paragraphs.append(
+                {
+                    "content": text,
+                    "page_num": page_num,
+                    "bbox": bbox,
+                    "page_height": page_size[1] if isinstance(page_size, (list, tuple)) and len(page_size) == 2 else None,
+                    "canvas_size": canvas,
+                    "block_type": b_type,
+                }
+            )
+    return paragraphs
 
 
 def _fix_mojibake(text: str) -> str:
@@ -308,7 +389,8 @@ def _extract_block_text(block: Dict[str, Any]) -> str:
     
     # 2. If empty, check for table_body (HTML)
     if not text and block.get("type") == "table":
-        text = block.get("table_body")
+        raw = block.get("table_body")
+        text = _table_html_to_plain_text(raw) if isinstance(raw, str) else raw
         
     # 3. If empty, check for list_items
     if not text and block.get("type") == "list":
@@ -318,6 +400,23 @@ def _extract_block_text(block: Dict[str, Any]) -> str:
             text = "\n".join([str(item) for item in items])
             
     return (text or "").strip()
+
+
+def _table_html_to_plain_text(table_html: str) -> str:
+    s = html.unescape(table_html or "")
+    s = re.sub(r"(?is)<\s*br\s*/?\s*>", "\n", s)
+    s = re.sub(r"(?is)</\s*(tr|p|div)\s*>", "\n", s)
+    s = re.sub(r"(?is)</\s*(td|th)\s*>", "\t", s)
+    s = re.sub(r"(?is)<[^>]+>", " ", s)
+    s = s.replace("\u00a0", " ")
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n\s+\n", "\n\n", s)
+    lines = []
+    for ln in s.splitlines():
+        ln = ln.strip()
+        if ln:
+            lines.append(ln)
+    return "\n".join(lines).strip()
 
 
 def _paragraphs_from_blocks_list(items: List[Any], *, meta: Dict[str, Any] | None) -> List[Dict[str, Any]]:
@@ -342,6 +441,7 @@ def _paragraphs_from_blocks_list(items: List[Any], *, meta: Dict[str, Any] | Non
                 "bbox": bbox,
                 "page_height": None,
                 "canvas_size": canvas,
+                "block_type": item.get("type"),
             }
         )
     return paragraphs

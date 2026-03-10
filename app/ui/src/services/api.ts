@@ -107,9 +107,15 @@ export async function streamApi(
       },
       onclose() {
         console.log('Stream closed')
+        if (!abortControllerRef.signal.aborted) {
+          throw new RetriableError('连接已关闭，请重试。')
+        }
       },
       onerror(err) {
         console.error('Stream error', err)
+        if (abortControllerRef.signal.aborted) {
+          throw new AbortedError()
+        }
         if (err instanceof RetriableError && retries < maxRetries) {
           retries++
           console.log(`Retrying stream... (${retries}/${maxRetries})`)

@@ -4,6 +4,7 @@ import json
 from typing import AsyncGenerator, List, Optional
 from uuid import uuid4
 
+import asyncio
 from common.models import Issue, IssueStatusEnum, ModifiedFieldsModel, DismissalFeedbackModel, ReviewRule
 from database.analysis_issues_repository import AnalysisIssuesRepository
 from database.analysis_runs_repository import AnalysisRunsRepository
@@ -106,6 +107,8 @@ class IssuesService:
         try:
             timestamp_iso = time_stamp.isoformat() if isinstance(time_stamp, datetime) else str(time_stamp)
             cached: Optional[dict] = None
+            if force:
+                await self.issues_repository.delete_issues_by_doc(document_id, owner_id=owner_id)
             if not force:
                 existing = await self.issues_repository.get_issues(document_id, owner_id=owner_id)
                 if existing:
@@ -186,6 +189,30 @@ class IssuesService:
                 owner_id=owner_id,
                 fields={"status": "completed"},
             )
+        except asyncio.CancelledError:
+            logging.warning(f"Review task cancelled for document {pdf_path}")
+            try:
+                if run_id:
+                    await self.analysis_runs_repository.update(
+                        run_id,
+                        owner_id=owner_id,
+                        fields={"status": "failed", "error_message": "任务中断：客户端连接断开或请求被取消"},
+                    )
+            except Exception:
+                pass
+            raise
+        except TimeoutError as e:
+            logging.error(f"MinerU processing timed out for document {pdf_path}: {e}")
+            try:
+                if run_id:
+                    await self.analysis_runs_repository.update(
+                        run_id,
+                        owner_id=owner_id,
+                        fields={"status": "failed", "error_message": "任务中断：文档解析超时 (MinerU Timeout)"},
+                    )
+            except Exception:
+                pass
+            raise RuntimeError("任务中断：文档解析超时 (MinerU Timeout)") from e
         except Exception as e:
             logging.error(f"Error initiating review for document {pdf_path}: {str(e)}")
             try:

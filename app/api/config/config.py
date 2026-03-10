@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     mineru_base_url: str = "https://mineru.net"
     mineru_api_key: str = ""
     mineru_model_version: str = "vlm"
+    mineru_is_ocr: bool = False
     mineru_poll_interval_sec: float = 1.0
     mineru_max_wait_sec: float = 300.0
     mineru_cache_artifacts: bool = True
@@ -30,6 +31,14 @@ class Settings(BaseSettings):
     mineru_bbox_origin: str = "top-left"  # "top-left" or "bottom-left"
     mineru_bbox_units: str = "auto"  # "auto", "px", "pt"
     mineru_bbox_content_coverage: float = 0.92  # used to infer full-page bbox canvas size from content extents
+
+    # PaddleOCR (online jobs API)
+    paddleocr_enabled: bool = False
+    paddleocr_job_url: str = ""
+    paddleocr_token: str = ""
+    paddleocr_model: str = "PaddleOCR-VL-1.5"
+    paddleocr_poll_interval_sec: float = 2.0
+    paddleocr_max_wait_sec: float = 180.0
 
     # LLM (DeepSeek via LangChain)
     deepseek_api_key: str = ""

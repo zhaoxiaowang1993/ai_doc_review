@@ -11,6 +11,11 @@ export interface Issue {
     source_sentence: string
     page_num: number
     bounding_box: number[]
+    anchors?: Array<{
+      page_num: number
+      bounding_box: number[]
+      source_text?: string
+    }>
   }
   review_initiated_by: string
   review_initiated_at_UTC: string

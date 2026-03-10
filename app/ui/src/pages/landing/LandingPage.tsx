@@ -353,7 +353,6 @@ export default function LandingPage() {
 
             {/* CTA Sections - Personal vs Enterprise */}
             <footer className="py-24 bg-slate-900 text-white relative overflow-hidden">
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
                 <div className="max-w-6xl mx-auto px-4 relative z-10">
                     <div className="grid md:grid-cols-2 gap-8 lg:gap-12">
                         {/* Personal/Team Card */}

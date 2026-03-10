@@ -4,11 +4,18 @@ from typing import Optional
 
 
 # ========== Location ==========
+class LocationAnchor(BaseModel):
+    page_num: int
+    bounding_box: list[float]
+    source_text: Optional[str] = None
+
+
 class Location(BaseModel):
     source_sentence: str
     page_num: int
     bounding_box: list[float]
     para_index: int
+    anchors: Optional[list[LocationAnchor]] = None
 
 
 # ========== Issue Types ==========

@@ -1,4 +1,4 @@
-import { CheckOutlined, DownOutlined, ReloadOutlined, UpOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons'
+import { CheckOutlined, DownOutlined, LeftOutlined, ReloadOutlined, RightOutlined, UpOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Drawer, List, Modal, Select, Spin, Tag } from 'antd'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -31,7 +31,7 @@ function Review() {
 
   const [issues, setIssues] = useState<Issue[]>([])
   const [selectedIssueId, setSelectedIssueId] = useState<string>()
-  const [, setSelectedAnnotId] = useState<string>()
+  const [selectedAnchorIndex, setSelectedAnchorIndex] = useState(0)
 
   const [checkInProgress, setCheckInProgress] = useState(false)
   const [checkComplete, setCheckComplete] = useState(false)
@@ -51,8 +51,10 @@ function Review() {
   const [documentCategoryLabel, setDocumentCategoryLabel] = useState<string>()
 
   const abortControllerRef = useRef<AbortController>()
+  const expectedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet())
   const latestRuleIdsRef = useRef<string[]>([])
   const pdfContainerRef = useRef<HTMLDivElement>(null)
+  const selectedAnnotIdRef = useRef<string>()
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -63,6 +65,52 @@ function Review() {
     () => issues.find((i) => i.id === selectedIssueId),
     [issues, selectedIssueId],
   )
+
+  const selectedAnchors = useMemo(() => {
+    const anchors = selectedIssue?.location?.anchors
+    return Array.isArray(anchors) ? anchors : []
+  }, [selectedIssue])
+
+  const canNavigateAnchors = selectedAnchors.length > 1
+
+  const applyHighlight = useCallback((pageNum: number, bbox: number[]) => {
+    try {
+      if (selectedAnnotIdRef.current) {
+        const pdfBytes = deleteAnnotation(selectedAnnotIdRef.current)
+        selectedAnnotIdRef.current = undefined
+        setPdfData({ data: pdfBytes })
+      }
+    } catch {
+    }
+    try {
+      const [pdfBytes, annot] = addAnnotation(pageNum, bbox, { r: 255, g: 64, b: 64 })
+      selectedAnnotIdRef.current = annot.id
+      setPdfData({ data: pdfBytes })
+    } catch {
+    }
+  }, [])
+
+  const gotoAnchor = useCallback((index: number) => {
+    if (!selectedIssue) return
+    const anchors = Array.isArray(selectedIssue.location?.anchors) ? selectedIssue.location.anchors : []
+    const target = anchors[index]
+    if (!target?.page_num || !target?.bounding_box?.length) return
+    setSelectedAnchorIndex(index)
+    setPageNumber(target.page_num)
+    applyHighlight(target.page_num, target.bounding_box)
+  }, [applyHighlight, selectedIssue])
+
+  const gotoPrevAnchor = useCallback(() => {
+    if (!canNavigateAnchors) return
+    const next = Math.max(0, selectedAnchorIndex - 1)
+    gotoAnchor(next)
+  }, [canNavigateAnchors, gotoAnchor, selectedAnchorIndex])
+
+  const gotoNextAnchor = useCallback(() => {
+    if (!canNavigateAnchors) return
+    const next = Math.min(selectedAnchors.length - 1, selectedAnchorIndex + 1)
+    gotoAnchor(next)
+  }, [canNavigateAnchors, gotoAnchor, selectedAnchorIndex, selectedAnchors.length])
 
   const filteredIssues = useMemo(() => {
     return issues
@@ -140,7 +188,15 @@ function Review() {
     const queryString = params.toString()
     const apiPath = `${docId}/issues${queryString ? `?${queryString}` : ''}`
 
-    abortControllerRef.current = new AbortController()
+    // 取消上一次可能的请求
+    if (abortControllerRef.current) {
+      expectedAbortRef.current.add(abortControllerRef.current)
+      abortControllerRef.current.abort()
+    }
+    // 创建新的 controller
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     streamApi(
       apiPath,
       (msg) => {
@@ -165,7 +221,9 @@ function Review() {
             throw new Error(msg.data)
           }
           case APIEvent.Complete: {
-            abortControllerRef.current?.abort()
+            // 完成时主动断开连接，但必须使用当前的 controller，避免误伤新请求
+            expectedAbortRef.current.add(controller)
+            controller.abort()
             setCheckComplete(true)
             setCheckInProgress(false)
             refreshRulesState(false)
@@ -176,10 +234,16 @@ function Review() {
         }
       },
       (err) => {
+        if (err.name === 'AbortError' || err.message.includes('aborted')) {
+          if (expectedAbortRef.current.has(controller)) return
+          setCheckError('连接已中断，请重试。')
+          setCheckInProgress(false)
+          return
+        }
         setCheckError(err.message)
         setCheckInProgress(false)
       },
-      abortControllerRef.current,
+      controller, // 传入当前的 controller
     )
   }, [docId, refreshRulesState])
 
@@ -205,47 +269,36 @@ function Review() {
     // 检查是否点击同一个 issue（取消选择）
     if (selectedIssueId === issue.id) {
       setSelectedIssueId(undefined)
-      setSelectedAnnotId((annotId) => {
-        if (annotId) {
-          const pdfBytes = deleteAnnotation(annotId)
+      setSelectedAnchorIndex(0)
+      try {
+        if (selectedAnnotIdRef.current) {
+          const pdfBytes = deleteAnnotation(selectedAnnotIdRef.current)
+          selectedAnnotIdRef.current = undefined
           setPdfData({ data: pdfBytes })
         }
-        return undefined
-      })
+      } catch {
+      }
       return
     }
 
     // 清除旧的注释
-    setSelectedAnnotId((annotId) => {
-      if (annotId) {
-        const pdfBytes = deleteAnnotation(annotId)
+    setSelectedAnchorIndex(0)
+    try {
+      if (selectedAnnotIdRef.current) {
+        const pdfBytes = deleteAnnotation(selectedAnnotIdRef.current)
+        selectedAnnotIdRef.current = undefined
         setPdfData({ data: pdfBytes })
       }
-      return undefined
-    })
+    } catch {
+    }
 
     // 设置新选中的 issue
     setSelectedIssueId(issue.id)
 
-    // 跳转到对应页面
-    if (issue.location?.page_num) {
-      setPageNumber(issue.location.page_num)
-    }
-
-    // 添加新的注释高亮
-    if (issue.location?.bounding_box?.length) {
-      try {
-        const [pdfBytes, annot] = addAnnotation(
-          issue.location.page_num,
-          issue.location.bounding_box,
-          { r: 255, g: 64, b: 64 }
-        )
-        setSelectedAnnotId(annot.id)
-        setPdfData({ data: pdfBytes })
-      } catch {
-        // ignore
-      }
-    }
+    const anchors = Array.isArray(issue.location?.anchors) ? issue.location.anchors : []
+    const target = anchors[0] ?? issue.location
+    if (target?.page_num) setPageNumber(target.page_num)
+    if (target?.bounding_box?.length) applyHighlight(target.page_num, target.bounding_box)
   }
 
   function handleUpdateIssue(updatedIssue: Issue) {
@@ -430,6 +483,13 @@ function Review() {
             <Button size="small" icon={<UpOutlined />} onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber === 1} />
             <Button size="small" icon={<DownOutlined />} onClick={() => setPageNumber((p) => Math.min(numPages ?? p + 1, p + 1))} disabled={!!numPages && pageNumber === numPages} />
             <span className="review-page-info">{pageNumber}/{numPages ?? '-'}</span>
+            {canNavigateAnchors && (
+              <>
+                <Button size="small" icon={<LeftOutlined />} onClick={gotoPrevAnchor} disabled={selectedAnchorIndex <= 0} />
+                <span className="review-page-info">命中 {selectedAnchorIndex + 1}/{selectedAnchors.length}</span>
+                <Button size="small" icon={<RightOutlined />} onClick={gotoNextAnchor} disabled={selectedAnchorIndex >= selectedAnchors.length - 1} />
+              </>
+            )}
           </div>
           <div className="review-toolbar-section">
             <Button size="small" icon={<ZoomOutOutlined />} onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} />
