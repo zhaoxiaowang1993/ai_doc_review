@@ -17,7 +17,7 @@ class DocumentsRepository:
 
     async def create(self, document: Document) -> Document:
         """创建新文档记录"""
-        item = document.model_dump()
+        item = document.model_dump(exclude={"review_status", "review_error_message"})
         await self.db_client.store_item("documents", item)
         logging.info(f"Created document: {document.id}")
         return document

@@ -205,6 +205,55 @@ export async function getReviewRulesState(docId: string): Promise<ReviewRulesSta
   return response.json()
 }
 
+export interface ReviewStatus {
+  doc_id: string
+  run_id: string | null
+  status: string
+  error_message: string | null
+}
+
+export async function getReviewStatus(docId: string): Promise<ReviewStatus> {
+  const response = await fetch(`${apiBaseUrl}${encodeURIComponent(docId)}/status`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function startReview(docId: string, opts?: { force?: boolean; rule_ids?: string[] }): Promise<ReviewStatus> {
+  const params = new URLSearchParams()
+  if (opts?.force) params.set('force', 'true')
+  if (opts?.rule_ids?.length) {
+    opts.rule_ids.forEach((id) => params.append('rule_ids', id))
+  }
+  const qs = params.toString()
+  const response = await fetch(`${apiBaseUrl}${encodeURIComponent(docId)}/start${qs ? `?${qs}` : ''}`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function cancelReview(docId: string): Promise<ReviewStatus> {
+  const response = await fetch(`${apiBaseUrl}${encodeURIComponent(docId)}/cancel`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
 // ========== Document Types API ==========
 
 export async function getDocumentTypes(): Promise<DocumentTypeWithSubtypes[]> {

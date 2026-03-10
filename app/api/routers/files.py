@@ -17,9 +17,21 @@ router = APIRouter()
 async def list_documents(
     user=Depends(validate_authenticated),
     documents_service: DocumentsService = Depends(get_documents_service),
+    issues_service: IssuesService = Depends(get_issues_service),
 ):
     docs = await documents_service.list_documents(owner_id=user.oid)
-    return docs
+    out: List[Document] = []
+    for d in docs:
+        status = await issues_service.get_review_status(d.id, owner_id=user.oid)
+        out.append(
+            d.model_copy(
+                update={
+                    "review_status": status.get("status"),
+                    "review_error_message": status.get("error_message"),
+                }
+            )
+        )
+    return out
 
 
 @router.post("/api/v1/documents")
@@ -113,6 +125,7 @@ async def delete_document(
     if not document:
         raise HTTPException(status_code=404, detail="文档不存在")
 
+    await issues_service.cancel_review(doc_id, owner_id=user.oid)
     await issues_service.issues_repository.delete_issues_by_doc(doc_id, owner_id=user.oid)
     await documents_service.delete_document(doc_id, owner_id=user.oid)
     storage.delete(document.storage_key)

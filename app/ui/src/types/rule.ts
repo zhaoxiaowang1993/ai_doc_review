@@ -70,6 +70,8 @@ export interface Document {
   created_at_utc: string
   created_by: string
   last_run_id?: string | null
+  review_status?: string | null
+  review_error_message?: string | null
 }
 
 export interface CreateRuleRequest {

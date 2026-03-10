@@ -4,6 +4,7 @@ from uuid import uuid4
 from dependencies import get_documents_service, get_issues_service, get_rules_service, get_storage_provider
 from common.logger import get_logger
 import json
+import asyncio
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from services.documents_service import DocumentsService
@@ -26,6 +27,9 @@ logging = get_logger(__name__)
 def issues_event(issues: list[Issue]) -> str:
     issue_objs = [issue.model_dump() for issue in issues]
     return f"event: issues\n" + (f"data: {json.dumps(issue_objs)}\n" if issues else "") + "\n"
+
+def error_event(message: str) -> str:
+    return f"event: error\n" + (f"data: {message}\n" if message else "") + "\n"
 
 
 class HitlStartRequest(BaseModel):
@@ -58,6 +62,99 @@ class ReviewRulesStateResponse(BaseModel):
     snapshot_reviewed_at_UTC: Optional[str] = None
     latest_rule_ids: List[str]
     rules_changed_since_review: bool
+
+
+class ReviewStatusResponse(BaseModel):
+    doc_id: str
+    run_id: Optional[str] = None
+    status: str
+    error_message: Optional[str] = None
+
+
+@router.get(
+    "/api/v1/review/{doc_id}/status",
+    summary="Get review run status for a document",
+    response_model=ReviewStatusResponse,
+)
+async def get_review_status(
+    doc_id: str,
+    user=Depends(validate_authenticated),
+    issues_service: IssuesService = Depends(get_issues_service),
+) -> ReviewStatusResponse:
+    status = await issues_service.get_review_status(doc_id, owner_id=user.oid)
+    return ReviewStatusResponse(**status)
+
+
+@router.post(
+    "/api/v1/review/{doc_id}/cancel",
+    summary="Cancel running review for a document",
+    response_model=ReviewStatusResponse,
+)
+async def cancel_review(
+    doc_id: str,
+    user=Depends(validate_authenticated),
+    issues_service: IssuesService = Depends(get_issues_service),
+) -> ReviewStatusResponse:
+    status = await issues_service.cancel_review(doc_id, owner_id=user.oid)
+    return ReviewStatusResponse(**status)
+
+
+@router.post(
+    "/api/v1/review/{doc_id}/start",
+    summary="Start review in background",
+    response_model=ReviewStatusResponse,
+)
+async def start_review(
+    doc_id: str,
+    force: bool = Query(False, description="Force re-review even if issues exist"),
+    rule_ids: Optional[List[str]] = Query(None, description="List of rule IDs to apply"),
+    user=Depends(validate_authenticated),
+    issues_service: IssuesService = Depends(get_issues_service),
+    rules_service: RulesService = Depends(get_rules_service),
+    documents_service: DocumentsService = Depends(get_documents_service),
+    storage: LocalStorageProvider = Depends(get_storage_provider),
+) -> ReviewStatusResponse:
+    date_time = datetime.now(timezone.utc)
+    document = await documents_service.get_document(doc_id, owner_id=user.oid)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        pdf_path = storage.open(document.storage_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Document not found on server")
+
+    custom_rules = None
+    if rule_ids:
+        custom_rules = await rules_service.get_rules_by_ids(rule_ids)
+        logging.info(f"Using {len(custom_rules)} custom rules for review")
+    else:
+        if not document.subtype_id:
+            raise HTTPException(status_code=400, detail="缺失文档分类信息，请重新上传并选择文书分类。")
+        custom_rules = await rules_service.get_rules_for_review(document.subtype_id)
+        logging.info(f"Loaded {len(custom_rules)} rules for review (subtype_id={document.subtype_id})")
+
+    snapshot_items = build_review_rules_snapshot_items(custom_rules or [])
+    snapshot_fingerprint = compute_review_rules_fingerprint(custom_rules or [])
+    rules_snapshot_json = json.dumps(snapshot_items, ensure_ascii=False, separators=(",", ":"))
+    pipeline_version = f"deepseek:{settings.deepseek_model}|mineru:{settings.mineru_model_version}|pagination:{settings.pagination}"
+    if force:
+        pipeline_version = f"{pipeline_version}|force:{uuid4()}"
+
+    status = await issues_service.start_review_in_background(
+        document_id=doc_id,
+        owner_id=user.oid,
+        subtype_id=document.subtype_id,
+        pdf_path=str(pdf_path),
+        user=user,
+        time_stamp=date_time,
+        rules_snapshot_json=rules_snapshot_json,
+        rules_fingerprint=snapshot_fingerprint,
+        pipeline_version=pipeline_version,
+        mineru_cache_key=document.sha256,
+        force=force,
+        custom_rules=custom_rules,
+    )
+    return ReviewStatusResponse(**status)
 
 
 @router.get(
@@ -144,82 +241,42 @@ async def get_pdf_issues(
     Returns:
         StreamingResponse: A text events stream containing identified issues.
     """
-    logging.info(f"Received initiate review request for document {doc_id}")
-
     try:
-        stored_issues = await issues_service.get_issues_data(doc_id, owner_id=user.oid)
-
-        # If force=true, delete existing issues and re-run
-        if force and stored_issues:
-            logging.info(f"Force re-review requested. Deleting {len(stored_issues)} existing issues for {doc_id}")
-            await issues_service.issues_repository.delete_issues_by_doc(doc_id, owner_id=user.oid)
-            stored_issues = []
-
-        if stored_issues:
-            logging.info(f"Found stored issues for document {doc_id}. Streaming issues...")
-
-            def issues_events():
-                yield issues_event(stored_issues)
-                yield "event: complete\n\n"
-
-            issues = issues_events()
-
-        else:
-            logging.info(f"No issues found for document {doc_id}. Initiating review...")
-            date_time = datetime.now(timezone.utc)
-            document = await documents_service.get_document(doc_id, owner_id=user.oid)
-            if not document:
-                raise HTTPException(status_code=404, detail="Document not found")
-            try:
-                pdf_path = storage.open(document.storage_key)
-            except FileNotFoundError:
-                raise HTTPException(status_code=404, detail="Document not found on server")
-
-            custom_rules = None
-            if rule_ids:
-                custom_rules = await rules_service.get_rules_by_ids(rule_ids)
-                logging.info(f"Using {len(custom_rules)} custom rules for review")
-            else:
-                if not document or not document.subtype_id:
-                    raise HTTPException(status_code=400, detail="缺失文档分类信息，请重新上传并选择文书分类。")
-                custom_rules = await rules_service.get_rules_for_review(document.subtype_id)
-                logging.info(f"Loaded {len(custom_rules)} rules for review (subtype_id={document.subtype_id})")
-
-            snapshot_items = build_review_rules_snapshot_items(custom_rules or [])
-            snapshot_fingerprint = compute_review_rules_fingerprint(custom_rules or [])
-            rules_snapshot_json = json.dumps(snapshot_items, ensure_ascii=False, separators=(",", ":"))
-            pipeline_version = f"deepseek:{settings.deepseek_model}|mineru:{settings.mineru_model_version}|pagination:{settings.pagination}"
-            if force:
-                pipeline_version = f"{pipeline_version}|force:{uuid4()}"
-
-            issues_stream = issues_service.initiate_review(
-                document_id=doc_id,
-                owner_id=user.oid,
-                subtype_id=document.subtype_id,
-                pdf_path=str(pdf_path),
-                user=user,
-                time_stamp=date_time,
-                rules_snapshot_json=rules_snapshot_json,
-                rules_fingerprint=snapshot_fingerprint,
-                pipeline_version=pipeline_version,
-                mineru_cache_key=document.sha256,
+        has_any_issues = await issues_service.issues_repository.any_issues_exist_for_doc(doc_id, owner_id=user.oid)
+        if force or (not has_any_issues):
+            await start_review(
+                doc_id=doc_id,
                 force=force,
-                custom_rules=custom_rules,
+                rule_ids=rule_ids,
+                user=user,
+                issues_service=issues_service,
+                rules_service=rules_service,
+                documents_service=documents_service,
+                storage=storage,
             )
 
-            async def issues_events():
-                try:
-                    async for issues in issues_stream:
-                        yield issues_event(issues)
+        async def issues_events():
+            since_rowid = 0
+            while True:
+                batch, since_rowid = await issues_service.issues_repository.get_issues_since_rowid(
+                    doc_id, owner_id=user.oid, since_rowid=since_rowid
+                )
+                if batch:
+                    yield issues_event(batch)
+                    continue
+
+                status = await issues_service.get_review_status(doc_id, owner_id=user.oid)
+                st = status.get("status")
+                if st == IssuesService.STATUS_COMPLETED:
                     yield "event: complete\n\n"
-                except Exception as e:
-                    logging.error(f"Error occurred while streaming issues: {str(e)}")
-                    yield "event: error\n"
-                    yield f"data: {str(e)}\n\n"
+                    return
+                if st in (IssuesService.STATUS_FAILED, IssuesService.STATUS_CANCELLED):
+                    msg = status.get("error_message") or "任务中断"
+                    yield error_event(msg)
+                    return
+                await asyncio.sleep(0.5)
 
-            issues = issues_events()
-
-        return StreamingResponse(issues, media_type="text/event-stream")
+        return StreamingResponse(issues_events(), media_type="text/event-stream")
 
     except ValueError as e:
         logging.error(f"Invalid input provided for document {doc_id}: {str(e)}")

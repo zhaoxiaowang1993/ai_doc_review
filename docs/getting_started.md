@@ -124,7 +124,7 @@ You can click each to view more details and accept or dismiss them, and optional
 
 ## Debugging the Application locally
 
-1. Create a virtualenv for the API if it doesn't already exist and install the required packages:
+1. Create a virtualenv (or use your active conda env) for the API and install the required packages:
 
    ```bash
    cd app/api
@@ -133,7 +133,7 @@ You can click each to view more details and accept or dismiss them, and optional
    pip install -r requirements.txt
    ```
 
-2. Select the new venv Python interpreter in Visual Studio Code
+2. Select the Python interpreter in Visual Studio Code
 
    `Ctrl+Shift+P` > `Python: Select Interpreter` > `app/api/.venv/bin/python3`
 

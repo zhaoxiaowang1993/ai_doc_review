@@ -9,7 +9,7 @@ import './ReviewPage.css'
 import { IssueDetailsPanel } from '../../components/IssueDetailsPanel'
 import { IssueListItem } from '../../components/IssueListItem'
 import { addAnnotation, deleteAnnotation, initAnnotations } from '../../services/annotations'
-import { streamApi, getDocument, getDocumentTypes, getReviewRulesState, downloadDocumentFile, getDocumentIssues } from '../../services/api'
+import { streamApi, getDocument, getDocumentTypes, getReviewRulesState, downloadDocumentFile, getDocumentIssues, getReviewStatus, startReview } from '../../services/api'
 import { APIEvent } from '../../types/api-events'
 import { Issue, IssueStatus } from '../../types/issue'
 import { issueRiskLevel, issueTypeLabel, normalizeIssueStatus } from '../../i18n/labels'
@@ -171,12 +171,12 @@ function Review() {
     }
   }, [docId])
 
-  const runCheck = useCallback((force = false) => {
+  const runCheck = useCallback((force = false, reset = true) => {
     if (!docId) return
     setCheckInProgress(true)
     setCheckError(undefined)
     setCheckComplete(false)
-    setIssues([])
+    if (reset) setIssues([])
 
     // Build query params - use ref to get current rule IDs without adding dependency
     const params = new URLSearchParams()
@@ -203,7 +203,17 @@ function Review() {
         switch (msg.event) {
           case APIEvent.Issues: {
             const newIssues = JSON.parse(msg.data) as Issue[]
-            setIssues((prev) => [...prev, ...newIssues])
+            setIssues((prev) => {
+              if (prev.length === 0) return newIssues
+              const seen = new Set(prev.map((i) => i.id))
+              const merged = prev.slice()
+              for (const it of newIssues) {
+                if (seen.has(it.id)) continue
+                seen.add(it.id)
+                merged.push(it)
+              }
+              return merged
+            })
             let pdfBytesWithAnnotations: Uint8Array | undefined
             for (const i of newIssues) {
               if (i.location && i.location.page_num && i.location.bounding_box?.length) {
@@ -362,25 +372,45 @@ function Review() {
   }, [refreshRulesState])
 
   useEffect(() => {
-    async function loadExistingIssues() {
+    async function initReview() {
       if (!docId) return
+      setCheckError(undefined)
       try {
+        let status = await getReviewStatus(docId)
+        if (status.status === 'not_started') {
+          status = await startReview(docId)
+        }
+
         const existing = await getDocumentIssues(docId)
-        if (existing.length > 0) {
-          setIssues(existing)
-          setCheckInProgress(false)
-          setCheckComplete(true)
-          setCheckError(undefined)
+        setIssues(existing)
+
+        const inProgress = status.status === 'running' || status.status === 'cancel_requested'
+        const isComplete = status.status === 'completed'
+        const isFailed = status.status === 'failed' || status.status === 'cancelled'
+
+        setCheckInProgress(inProgress)
+        setCheckComplete(isComplete)
+        if (isFailed && status.error_message) setCheckError(status.error_message)
+
+        if (inProgress) {
+          runCheck(false, false)
           return
         }
-        runCheck(false)
+        if (!isComplete && existing.length === 0) {
+          runCheck(false, true)
+        }
       } catch (e) {
         setCheckError(e instanceof Error ? e.message : String(e))
         setCheckInProgress(false)
       }
     }
-    loadExistingIssues()
-    return () => abortControllerRef.current?.abort()
+    initReview()
+    return () => {
+      if (abortControllerRef.current) {
+        expectedAbortRef.current.add(abortControllerRef.current)
+        abortControllerRef.current.abort()
+      }
+    }
   }, [docId, runCheck])
 
   // Update PDF container width on resize

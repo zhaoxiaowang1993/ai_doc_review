@@ -109,6 +109,8 @@ class Document(BaseModel):
     created_at_utc: str
     created_by: str
     last_run_id: Optional[str] = None
+    review_status: Optional[str] = None
+    review_error_message: Optional[str] = None
 
 
 class SingleShotIssue(BaseModel):

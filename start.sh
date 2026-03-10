@@ -195,9 +195,16 @@ echo -e "${GREEN}   ✅ 已进入后端目录${NC}"
 
 # 如果使用的是 conda 环境，不需要激活 venv
 # 如果使用的是系统 Python，尝试激活 venv（如果存在）
-if [[ "$PYTHON_CMD" != *"envs/$CONDA_ENV_NAME"* ]] && [ -f "venv/bin/activate" ]; then
-    echo -e "${YELLOW}   激活虚拟环境 venv...${NC}"
-    source venv/bin/activate || true
+VENV_DIR=""
+if [ -f ".venv/bin/activate" ]; then
+    VENV_DIR=".venv"
+elif [ -f "venv/bin/activate" ]; then
+    VENV_DIR="venv"
+fi
+
+if [[ "$PYTHON_CMD" != *"envs/$CONDA_ENV_NAME"* ]] && [ -n "$VENV_DIR" ]; then
+    echo -e "${YELLOW}   激活虚拟环境 $VENV_DIR...${NC}"
+    source "$VENV_DIR/bin/activate" || true
 fi
 
 # 验证 uvicorn 是否可用

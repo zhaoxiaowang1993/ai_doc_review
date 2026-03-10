@@ -73,24 +73,36 @@ echo -e "${CYAN}└────────────────────�
 
 cd app/api
 
-# 创建虚拟环境（如果不存在）
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}📦 创建 Python 虚拟环境...${NC}"
-    $PYTHON_CMD -m venv venv
-    echo -e "${GREEN}✅ 虚拟环境已创建${NC}"
+if [ -n "${CONDA_PREFIX:-}" ]; then
+    echo -e "${GREEN}✅ 检测到 conda 环境: ${CONDA_DEFAULT_ENV:-unknown}${NC}"
+    echo -e "${YELLOW}📦 将在当前 conda 环境中安装 Python 依赖（不创建 venv）...${NC}"
+
+    echo -e "${YELLOW}📦 升级 pip...${NC}"
+    $PYTHON_CMD -m pip install --upgrade pip -q
+
+    echo -e "${YELLOW}📦 安装 Python 依赖...${NC}"
+    $PYTHON_CMD -m pip install -r requirements.txt -q
+    echo -e "${GREEN}✅ Python 依赖安装完成${NC}"
+else
+    VENV_DIR=""
+    if [ -d ".venv" ]; then
+        VENV_DIR=".venv"
+    elif [ -d "venv" ]; then
+        VENV_DIR="venv"
+    else
+        VENV_DIR=".venv"
+        echo -e "${YELLOW}📦 创建 Python 虚拟环境...${NC}"
+        $PYTHON_CMD -m venv "$VENV_DIR"
+        echo -e "${GREEN}✅ 虚拟环境已创建: $VENV_DIR${NC}"
+    fi
+
+    echo -e "${YELLOW}📦 升级 pip...${NC}"
+    "$VENV_DIR/bin/python" -m pip install --upgrade pip -q
+
+    echo -e "${YELLOW}📦 安装 Python 依赖...${NC}"
+    "$VENV_DIR/bin/python" -m pip install -r requirements.txt -q
+    echo -e "${GREEN}✅ Python 依赖安装完成${NC}"
 fi
-
-# 激活虚拟环境
-source venv/bin/activate
-
-# 升级 pip
-echo -e "${YELLOW}📦 升级 pip...${NC}"
-pip install --upgrade pip -q
-
-# 安装依赖
-echo -e "${YELLOW}📦 安装 Python 依赖...${NC}"
-pip install -r requirements.txt -q
-echo -e "${GREEN}✅ Python 依赖安装完成${NC}"
 
 # 检查 .env 文件
 if [ ! -f ".env" ]; then
@@ -139,4 +151,3 @@ echo -e "${WHITE}   1. 编辑 app/api/.env 文件，配置必要的 API Key${NC}
 echo -e "${WHITE}   2. 运行 ./start.sh 启动服务${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
 echo ""
-

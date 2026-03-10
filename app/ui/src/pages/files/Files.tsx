@@ -180,6 +180,8 @@ const useStyles = makeStyles({
   },
   docInfo: {
     padding: '14px 12px',
+    display: 'flex',
+    flexDirection: 'column',
   },
   docName: {
     fontSize: '12px',
@@ -190,13 +192,17 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
   },
   docMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
     color: tokens.colorNeutralForeground3,
     fontSize: '11px',
   },
-  docActions: {
+  docFooter: {
     display: 'flex',
-    justifyContent: 'flex-end',
-    padding: '0 8px 8px',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: '10px',
   },
   deleteBtn: {
     minWidth: 'auto',
@@ -239,14 +245,24 @@ function Files() {
     loadFileList()
   }, [])
 
-  async function refreshList() {
+  const refreshList = useCallback(async () => {
     try {
       const files = await listDocuments()
       setFileList(files)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!fileList) return
+    const hasRunning = fileList.some((d) => d.review_status === 'running' || d.review_status === 'cancel_requested')
+    if (!hasRunning) return
+    const timer = window.setInterval(() => {
+      refreshList()
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [fileList, refreshList])
 
   const handleDelete = async () => {
     if (!deleteTarget) return
@@ -254,8 +270,7 @@ function Files() {
     setDeleting(true)
     try {
       await deleteDocument(deleteTarget.id)
-      const files = await listDocuments()
-      setFileList(files)
+      await refreshList()
       setDeleteTarget(undefined)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -357,21 +372,35 @@ function Files() {
                 </div>
                 <div className={classes.docInfo} onClick={() => openDocument(file.id)}>
                   <div className={classes.docName}>{file.display_name || file.original_filename}</div>
-                  <div className={classes.docMeta}>
-                    已上传
+                  <div className={classes.docFooter}>
+                    <div className={classes.docMeta}>
+                      {(file.review_status === 'running' || file.review_status === 'cancel_requested') && (
+                        <Badge appearance="filled" color="warning" shape="rounded">
+                          审核中
+                        </Badge>
+                      )}
+                      {file.review_status === 'completed' && (
+                        <Badge appearance="filled" color="success" shape="rounded">
+                          审核完成
+                        </Badge>
+                      )}
+                      {(file.review_status === 'failed' || file.review_status === 'cancelled') && (
+                        <Badge appearance="filled" color="danger" shape="rounded">
+                          审核失败
+                        </Badge>
+                      )}
+                    </div>
+                    <Button
+                      appearance="subtle"
+                      size="small"
+                      icon={<DeleteRegular />}
+                      className={classes.deleteBtn}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteTarget(file)
+                      }}
+                    />
                   </div>
-                </div>
-                <div className={classes.docActions}>
-                  <Button
-                    appearance="subtle"
-                    size="small"
-                    icon={<DeleteRegular />}
-                    className={classes.deleteBtn}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteTarget(file)
-                    }}
-                  />
                 </div>
               </div>
             ))}

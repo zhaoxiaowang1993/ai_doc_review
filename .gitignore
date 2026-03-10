@@ -13,7 +13,7 @@
 !.env.example
 !.env.prod
 !.env.production
-.venv
+.venv*/
 env/
 venv/
 ENV/

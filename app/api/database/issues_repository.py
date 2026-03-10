@@ -1,5 +1,5 @@
 from common.logger import get_logger
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from common.models import Issue
 from database.db_client import SQLiteClient
 
@@ -122,3 +122,34 @@ class IssuesRepository:
         if not rows:
             return None
         return rows[0].get("source_run_id")
+
+    async def get_issues_since_rowid(
+        self,
+        doc_id: str,
+        *,
+        owner_id: str,
+        since_rowid: int = 0,
+        limit: int = 200,
+    ) -> Tuple[List[Issue], int]:
+        rows = await self.db_client.execute_query(
+            """
+            SELECT rowid as _rowid, *
+            FROM issues
+            WHERE document_id = ? AND owner_id = ? AND rowid > ?
+            ORDER BY rowid ASC
+            LIMIT ?
+            """,
+            (doc_id, owner_id, since_rowid, limit),
+        )
+        if not rows:
+            return ([], since_rowid)
+
+        last = since_rowid
+        issues: List[Issue] = []
+        for r in rows:
+            rowid = r.pop("_rowid", None)
+            if isinstance(rowid, int) and rowid > last:
+                last = rowid
+            issues.append(Issue(**self._deserialize_issue(self._deserialize_issue_row(r))))
+
+        return (issues, last)
