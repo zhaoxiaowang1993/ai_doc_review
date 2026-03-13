@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
     CheckmarkCircleRegular,
     BuildingRegular,
@@ -34,9 +34,9 @@ import avatarEcommerce from '../../assets/landing/avatar_ecommerce.png';
 import avatarConsultant from '../../assets/landing/avatar_consultant.png';
 
 
-export default function LandingPage() {
-    const navigate = useNavigate();
+const FEISHU_BETA_FORM_URL = 'https://yinyukeji.feishu.cn/share/base/form/shrcnAsdiND251wqNjeQgC5XnDc';
 
+export default function LandingPage() {
     // Typewriter effect
     const [typewriterText, setTypewriterText] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
@@ -70,7 +70,7 @@ export default function LandingPage() {
     }, [typewriterText, isDeleting, loopNum, typingSpeed]);
 
     const handleTryIt = () => {
-        navigate('/files');
+        window.open(FEISHU_BETA_FORM_URL, '_blank');
     };
 
     // Updated Bento Grid Items with Images
@@ -119,7 +119,7 @@ export default function LandingPage() {
                     </div>
                     <div className="flex items-center space-x-4">
                         <button onClick={handleTryIt} className="px-5 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors shadow-sm hover:shadow-md">
-                            免费使用
+                            申请内测
                         </button>
                     </div>
                 </div>
@@ -143,7 +143,7 @@ export default function LandingPage() {
                         </p>
                         <div className="flex flex-col sm:flex-row gap-4 pt-4">
                             <button onClick={handleTryIt} className="px-8 py-4 bg-primary text-white rounded-xl font-semibold hover:bg-primary-hover transition-all shadow-lg hover:shadow-primary/25 flex items-center justify-center gap-2 group">
-                                免费使用
+                                申请内测
                                 <ArrowRightRegular className="group-hover:translate-x-1 transition-transform" />
                             </button>
                         </div>
@@ -365,7 +365,7 @@ export default function LandingPage() {
                                 </p>
                             </div>
                             <button onClick={handleTryIt} className="w-full sm:w-auto px-10 py-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold text-lg hover:shadow-lg hover:shadow-blue-500/30 transition-all transform group-hover:scale-105">
-                                免费使用
+                                申请内测
                             </button>
                         </div>
 
@@ -392,7 +392,7 @@ export default function LandingPage() {
                                 </ul>
                             </div>
                             <button
-                                onClick={() => window.open('https://yinyukeji.feishu.cn/share/base/form/shrcnAsdiND251wqNjeQgC5XnDc', '_blank')}
+                                onClick={() => window.open(FEISHU_BETA_FORM_URL, '_blank')}
                                 className="w-full sm:w-auto px-10 py-4 bg-transparent border border-blue-400 text-blue-100 rounded-xl font-bold text-lg hover:bg-blue-900/30 hover:text-white transition-all"
                             >
                                 申请企业版
