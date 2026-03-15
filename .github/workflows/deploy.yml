@@ -7,6 +7,9 @@ on:
     tags:
       - "v*"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -23,7 +26,7 @@ jobs:
           pip install -r /tmp/requirements.txt
       - name: Run backend tests
         working-directory: app/api
-        run: python -m unittest discover -s tests -p "test_*.py"
+        run: python -m unittest discover -s tests -p "test_*.py" -v
 
   build:
     runs-on: ubuntu-latest
