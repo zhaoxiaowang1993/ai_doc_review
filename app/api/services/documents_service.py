@@ -12,9 +12,9 @@ logging = get_logger(__name__)
 class DocumentsService:
     """文档业务逻辑层：封装文档管理相关业务逻辑"""
 
-    def __init__(self, repository: DocumentsRepository, assets_repository: DocumentAssetsRepository) -> None:
+    def __init__(self, repository: DocumentsRepository, assets_repository: Optional[DocumentAssetsRepository] = None) -> None:
         self.repository = repository
-        self.assets_repository = assets_repository
+        self.assets_repository = assets_repository or DocumentAssetsRepository(repository.db_client)
 
     async def create_document(
         self,
