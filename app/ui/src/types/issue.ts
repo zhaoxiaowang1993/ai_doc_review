@@ -1,3 +1,26 @@
+export type IssueLocation =
+  | {
+      type?: 'pdf_quadpoints'
+      source_sentence?: string
+      page_num?: number
+      bounding_box?: number[]
+      anchors?: Array<{
+        page_num: number
+        bounding_box: number[]
+        source_text?: string
+      }>
+      para_index?: number
+    }
+  | {
+      type: 'ir_anchor'
+      source_sentence?: string
+      para_index?: number
+      node_id?: string
+      path?: string[]
+      start_offset?: number
+      end_offset?: number
+    }
+
 export interface Issue {
   id: string
   doc_id: string
@@ -7,16 +30,7 @@ export interface Issue {
   explanation: string
   suggested_fix: string
   risk_level?: string | null  // 风险等级：高/中/低
-  location: {
-    source_sentence: string
-    page_num: number
-    bounding_box: number[]
-    anchors?: Array<{
-      page_num: number
-      bounding_box: number[]
-      source_text?: string
-    }>
-  }
+  location?: IssueLocation | null
   review_initiated_by: string
   review_initiated_at_UTC: string
   resolved_by: string

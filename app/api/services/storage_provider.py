@@ -24,19 +24,35 @@ class LocalStorageProvider:
     def name(self) -> str:
         return "local"
 
-    def put_pdf(self, *, doc_id: str, data: bytes) -> StoredObject:
+    def put_object(self, *, storage_key: str, mime_type: str, data: bytes) -> StoredObject:
         sha256 = hashlib.sha256(data).hexdigest()
-        storage_key = f"objects/{doc_id}.pdf"
         path = self._resolve_storage_key(storage_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         return StoredObject(
             storage_provider=self.name,
             storage_key=storage_key,
-            mime_type="application/pdf",
+            mime_type=mime_type,
             size_bytes=len(data),
             sha256=sha256,
         )
+
+    def put_pdf(self, *, doc_id: str, data: bytes) -> StoredObject:
+        return self.put_object(storage_key=f"objects/{doc_id}.pdf", mime_type="application/pdf", data=data)
+
+    def put_upload(self, *, doc_id: str, filename: str, data: bytes) -> StoredObject:
+        ext = Path(filename).suffix.lower().lstrip(".")
+        storage_key = f"objects/{doc_id}.{ext}" if ext else f"objects/{doc_id}"
+        mime_type = "application/octet-stream"
+        if ext == "pdf":
+            mime_type = "application/pdf"
+        elif ext == "txt":
+            mime_type = "text/plain"
+        elif ext == "docx":
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif ext == "doc":
+            mime_type = "application/msword"
+        return self.put_object(storage_key=storage_key, mime_type=mime_type, data=data)
 
     def open(self, storage_key: str) -> Path:
         path = self._resolve_storage_key(storage_key)

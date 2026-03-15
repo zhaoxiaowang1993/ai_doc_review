@@ -75,6 +75,14 @@ class IssuesRepository:
         data = issue.model_dump()
         if "doc_id" in data:
             data["document_id"] = data.pop("doc_id")
+        loc = data.get("location")
+        if isinstance(loc, dict):
+            lt = loc.get("type")
+            if hasattr(lt, "value"):
+                lt = lt.value
+            data["location_type"] = lt or "pdf_quadpoints"
+        elif loc is None:
+            data["location_type"] = None
         # Flatten nested objects to JSON strings for SQLite storage
         for key in ["location", "modified_fields", "dismissal_feedback", "feedback"]:
             if key in data and data[key] is not None:

@@ -1,9 +1,14 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from enum import Enum
-from typing import Optional
+from typing import Annotated, Literal, Optional, Union
 
 
 # ========== Location ==========
+class LocationTypeEnum(str, Enum):
+    pdf_quadpoints = "pdf_quadpoints"
+    ir_anchor = "ir_anchor"
+
+
 class LocationAnchor(BaseModel):
     page_num: int
     bounding_box: list[float]
@@ -11,11 +16,16 @@ class LocationAnchor(BaseModel):
 
 
 class Location(BaseModel):
-    source_sentence: str
-    page_num: int
-    bounding_box: list[float]
-    para_index: int
+    type: LocationTypeEnum = LocationTypeEnum.pdf_quadpoints
+    source_sentence: Optional[str] = None
+    page_num: Optional[int] = None
+    bounding_box: Optional[list[float]] = None
+    para_index: Optional[int] = None
     anchors: Optional[list[LocationAnchor]] = None
+    node_id: Optional[str] = None
+    path: Optional[list[str]] = None
+    start_offset: Optional[int] = None
+    end_offset: Optional[int] = None
 
 
 # ========== Issue Types ==========
@@ -195,3 +205,52 @@ class Issue(BaseModel):
 
     class Config:
         use_enum_values = True
+
+
+# ========== Document IR ==========
+class IRTextRun(BaseModel):
+    id: str
+    text: str
+
+
+class IRParagraph(BaseModel):
+    type: Literal["paragraph"] = "paragraph"
+    id: str
+    runs: list[IRTextRun] = []
+
+
+class IRTableCell(BaseModel):
+    id: str
+    blocks: list[IRParagraph] = []
+
+
+class IRTableRow(BaseModel):
+    id: str
+    cells: list[IRTableCell] = []
+
+
+class IRTable(BaseModel):
+    type: Literal["table"] = "table"
+    id: str
+    rows: list[IRTableRow] = []
+
+
+IRBlock = Annotated[Union[IRParagraph, IRTable], Field(discriminator="type")]
+
+
+class DocumentIR(BaseModel):
+    version: str = "ir:v1"
+    blocks: list[IRBlock] = []
+
+
+class IRPatchOp(BaseModel):
+    op: Literal["replace"] = "replace"
+    node_id: str
+    start_offset: int
+    end_offset: int
+    text: str
+
+
+class IRPatch(BaseModel):
+    version: str = "irpatch:v1"
+    ops: list[IRPatchOp] = []

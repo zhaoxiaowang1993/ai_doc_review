@@ -12,12 +12,13 @@ from services.issues_service import IssuesService
 from services.rules_service import RulesService
 from fastapi.responses import StreamingResponse
 from security.auth import validate_authenticated
-from common.models import Issue, ModifiedFieldsModel, DismissalFeedbackModel, IssueStatusEnum
+from common.models import DocumentIR, Issue, ModifiedFieldsModel, DismissalFeedbackModel, IssueStatusEnum
 from config.config import settings
 from pydantic import BaseModel
 from services.rules_fingerprint import build_review_rules_snapshot_items, compute_review_rules_fingerprint
 from common.models import RiskLevel
 from services.storage_provider import LocalStorageProvider
+from services.ir_build_service import build_ir_in_background
 
 
 router = APIRouter()
@@ -118,10 +119,37 @@ async def start_review(
     document = await documents_service.get_document(doc_id, owner_id=user.oid)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        pdf_path = storage.open(document.storage_key)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Document not found on server")
+    is_pdf = (document.mime_type or "").lower().startswith("application/pdf")
+    pdf_path = None
+    ir = None
+    if is_pdf:
+        try:
+            pdf_path = storage.open(document.storage_key)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Document not found on server")
+    else:
+        if force:
+            await build_ir_in_background(
+                doc_id=doc_id,
+                owner_id=user.oid,
+                original_storage_key=document.storage_key,
+                original_mime_type=document.mime_type,
+                storage=storage,
+                documents_service=documents_service,
+            )
+        row = await documents_service.get_document_row(doc_id, owner_id=user.oid)
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+        if (row.get("ir_status") or "") != "ready":
+            raise HTTPException(status_code=409, detail="IR 未就绪")
+        ir_asset_id = row.get("ir_asset_id")
+        if not ir_asset_id:
+            raise HTTPException(status_code=404, detail="IR 不存在")
+        asset = await documents_service.assets_repository.get_by_id(ir_asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="IR 不存在")
+        ir_data = json.loads(storage.open(asset["storage_key"]).read_text(encoding="utf-8"))
+        ir = DocumentIR(**ir_data)
 
     custom_rules = None
     if rule_ids:
@@ -136,24 +164,44 @@ async def start_review(
     snapshot_items = build_review_rules_snapshot_items(custom_rules or [])
     snapshot_fingerprint = compute_review_rules_fingerprint(custom_rules or [])
     rules_snapshot_json = json.dumps(snapshot_items, ensure_ascii=False, separators=(",", ":"))
-    pipeline_version = f"deepseek:{settings.deepseek_model}|mineru:{settings.mineru_model_version}|pagination:{settings.pagination}"
+    if is_pdf:
+        pipeline_version = f"deepseek:{settings.deepseek_model}|mineru:{settings.mineru_model_version}|pagination:{settings.pagination}"
+    else:
+        ir_driver_version = (row.get("ir_driver_version") if isinstance(row, dict) else None) or "ir:v1"
+        pipeline_version = f"deepseek:{settings.deepseek_model}|driver:{ir_driver_version}|pagination:{settings.pagination}"
     if force:
         pipeline_version = f"{pipeline_version}|force:{uuid4()}"
 
-    status = await issues_service.start_review_in_background(
-        document_id=doc_id,
-        owner_id=user.oid,
-        subtype_id=document.subtype_id,
-        pdf_path=str(pdf_path),
-        user=user,
-        time_stamp=date_time,
-        rules_snapshot_json=rules_snapshot_json,
-        rules_fingerprint=snapshot_fingerprint,
-        pipeline_version=pipeline_version,
-        mineru_cache_key=document.sha256,
-        force=force,
-        custom_rules=custom_rules,
-    )
+    if is_pdf:
+        status = await issues_service.start_review_in_background(
+            document_id=doc_id,
+            owner_id=user.oid,
+            subtype_id=document.subtype_id,
+            pdf_path=str(pdf_path),
+            user=user,
+            time_stamp=date_time,
+            rules_snapshot_json=rules_snapshot_json,
+            rules_fingerprint=snapshot_fingerprint,
+            pipeline_version=pipeline_version,
+            mineru_cache_key=document.sha256,
+            force=force,
+            custom_rules=custom_rules,
+        )
+    else:
+        status = await issues_service.start_ir_review_in_background(
+            document_id=doc_id,
+            owner_id=user.oid,
+            subtype_id=document.subtype_id,
+            ir=ir,
+            user=user,
+            time_stamp=date_time,
+            rules_snapshot_json=rules_snapshot_json,
+            rules_fingerprint=snapshot_fingerprint,
+            pipeline_version=pipeline_version,
+            input_fingerprint=document.sha256,
+            force=force,
+            custom_rules=custom_rules,
+        )
     return ReviewStatusResponse(**status)
 
 

@@ -31,12 +31,32 @@ class DocumentsRepository:
             return None
         return Document(**rows[0])
 
+    async def get_row_by_id(self, doc_id: str, *, owner_id: str) -> Optional[dict]:
+        rows = await self.db_client.execute_query(
+            "SELECT * FROM documents WHERE id = ? AND owner_id = ?",
+            (doc_id, owner_id),
+        )
+        return dict(rows[0]) if rows else None
+
     async def list_by_owner(self, *, owner_id: str) -> List[Document]:
         rows = await self.db_client.execute_query(
             "SELECT * FROM documents WHERE owner_id = ? ORDER BY created_at_utc DESC",
             (owner_id,),
         )
         return [Document(**r) for r in rows]
+
+    async def find_by_sha256(self, *, owner_id: str, sha256: str, subtype_id: str) -> Optional[dict]:
+        rows = await self.db_client.execute_query(
+            """
+            SELECT *
+            FROM documents
+            WHERE owner_id = ? AND sha256 = ? AND subtype_id = ?
+            ORDER BY created_at_utc DESC
+            LIMIT 1
+            """,
+            (owner_id, sha256, subtype_id),
+        )
+        return dict(rows[0]) if rows else None
 
     async def update_last_run_id(self, doc_id: str, *, owner_id: str, last_run_id: str | None) -> None:
         rows = await self.db_client.execute_query(
@@ -47,6 +67,17 @@ class DocumentsRepository:
             raise ValueError(f"Document {doc_id} not found.")
         row = dict(rows[0])
         row["last_run_id"] = last_run_id
+        await self.db_client.store_item("documents", row)
+
+    async def update_fields(self, doc_id: str, *, owner_id: str, fields: dict) -> None:
+        rows = await self.db_client.execute_query(
+            "SELECT * FROM documents WHERE id = ? AND owner_id = ?",
+            (doc_id, owner_id),
+        )
+        if not rows:
+            raise ValueError(f"Document {doc_id} not found.")
+        row = dict(rows[0])
+        row.update(fields)
         await self.db_client.store_item("documents", row)
 
     async def delete(self, doc_id: str, *, owner_id: str) -> None:

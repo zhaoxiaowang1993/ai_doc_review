@@ -17,7 +17,7 @@ from typing import Literal
 import fitz
 
 from common.logger import get_logger
-from common.models import Issue, IssueStatusEnum, IssueType, Location, LocationAnchor, ReviewRule, RiskLevel
+from common.models import DocumentIR, Issue, IssueStatusEnum, IssueType, Location, LocationAnchor, LocationTypeEnum, ReviewRule, RiskLevel
 from config.config import settings
 from services.bbox import bbox_to_quadpoints
 from services.mineru_client import MinerUClient
@@ -241,10 +241,183 @@ class LangChainPipeline:
             if issues:
                 yield issues
 
+    async def stream_ir_issues(
+        self,
+        *,
+        doc_id: str,
+        ir: DocumentIR,
+        user_id: str,
+        timestamp_iso: str,
+        custom_rules: List[ReviewRule] | None = None,
+    ) -> AsyncGenerator[List[Issue], None]:
+        paragraphs = self._ir_to_paragraphs(ir)
+        if not paragraphs:
+            raise RuntimeError("IR 解析结果中未提取到段落文本。")
+
+        chunks = self._chunk_paragraphs(paragraphs, settings.pagination)
+        logging.info(f"IR chunk count: {len(chunks)} (pagination={settings.pagination})")
+        for chunk_index, chunk in enumerate(chunks):
+            issues = await self._process_ir_chunk(
+                chunk=chunk,
+                chunk_index=chunk_index,
+                user_id=user_id,
+                timestamp_iso=timestamp_iso,
+                doc_id=doc_id,
+                custom_rules=custom_rules,
+            )
+            if issues:
+                yield issues
+
+    async def _process_ir_chunk(
+        self,
+        *,
+        chunk: List[Dict[str, Any]],
+        chunk_index: int,
+        user_id: str,
+        timestamp_iso: str,
+        doc_id: str,
+        custom_rules: List[ReviewRule] | None = None,
+    ) -> List[Issue]:
+        prepared = "\n".join([f"[{i}]{p['content']}" for i, p in enumerate(chunk)])
+
+        system_prompt = _build_system_prompt(custom_rules)
+        guidance = _build_guidance(custom_rules)
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(
+                content=(
+                    f"Chunk {chunk_index}. Paragraphs with indices:\n{prepared}\n\n"
+                    f"{guidance}\n"
+                    "Return issues; if none, return an empty list.\n\n"
+                    f"{self.parser.get_format_instructions()}"
+                )
+            ),
+        ]
+
+        try:
+            resp = await self.llm.ainvoke(messages)
+            content = resp.content if hasattr(resp, "content") else resp
+            if isinstance(content, list):
+                content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+            raw_issues = _parse_review_output_best_effort(self.parser, str(content))
+        except Exception as e:
+            logging.error(f"LLM output parse failed: {e}")
+            return []
+
+        issues: List[Issue] = []
+        seen: set[tuple[int, str, str]] = set()
+        for raw in raw_issues or []:
+            issue_type = raw.type if isinstance(raw, ReviewIssue) else IssueType.GrammarSpelling.value
+            risk_level = self._get_risk_level_for_type(issue_type, custom_rules)
+            local_index = raw.para_index if isinstance(raw, ReviewIssue) else 0
+            para = chunk[local_index] if 0 <= local_index < len(chunk) else chunk[0]
+            if "global_index" in para:
+                global_index = int(para.get("global_index") or 0)
+            else:
+                if settings.pagination == -1:
+                    global_index = int(local_index)
+                else:
+                    global_index = int(chunk_index * settings.pagination + local_index)
+
+            needle_text = raw.text if isinstance(raw, ReviewIssue) else None
+            key = (
+                int(global_index),
+                str(issue_type),
+                _normalize_for_match(str(needle_text or "")).replace(" ", ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+
+            node_id, path, start, end = self._locate_ir_anchor_location(para=para, needle=needle_text)
+            location = Location(
+                type=LocationTypeEnum.ir_anchor,
+                source_sentence=para.get("content"),
+                para_index=global_index,
+                node_id=node_id,
+                path=path,
+                start_offset=start,
+                end_offset=end,
+            )
+
+            issues.append(
+                Issue(
+                    id=str(uuid.uuid4()),
+                    doc_id=doc_id,
+                    text=(needle_text if isinstance(needle_text, str) and needle_text.strip() else (para.get("content") or "")[:120]),
+                    type=issue_type,
+                    status=IssueStatusEnum.not_reviewed,
+                    suggested_fix=(raw.suggested_fix if isinstance(raw, ReviewIssue) else ""),
+                    explanation=(raw.explanation if isinstance(raw, ReviewIssue) else ""),
+                    risk_level=risk_level,
+                    location=location,
+                    review_initiated_by=user_id,
+                    review_initiated_at_UTC=timestamp_iso,
+                )
+            )
+
+        return issues
+
     def _chunk_paragraphs(self, paragraphs: List[Dict[str, Any]], size: int) -> List[List[Dict[str, Any]]]:
         if size == -1:
             return [paragraphs]
         return [paragraphs[i : i + size] for i in range(0, len(paragraphs), size)]
+
+    def _ir_to_paragraphs(self, ir: DocumentIR) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        g = 0
+        for b in ir.blocks:
+            if getattr(b, "type", "") == "paragraph":
+                text = "".join([r.text for r in (b.runs or [])])
+                out.append(
+                    {"content": text, "node_id": b.id, "path": [b.id], "block_type": "paragraph", "global_index": g}
+                )
+                g += 1
+            elif getattr(b, "type", "") == "table":
+                for row in b.rows or []:
+                    for cell in row.cells or []:
+                        for p in cell.blocks or []:
+                            text = "".join([r.text for r in (p.runs or [])])
+                            out.append(
+                                {
+                                    "content": text,
+                                    "node_id": p.id,
+                                    "path": [b.id, row.id, cell.id, p.id],
+                                    "block_type": "table",
+                                    "global_index": g,
+                                }
+                            )
+                            g += 1
+        return out
+
+    def _locate_ir_anchor_location(
+        self, *, para: Dict[str, Any], needle: Optional[str]
+    ) -> tuple[str | None, list[str] | None, int, int]:
+        node_id = para.get("node_id")
+        path = para.get("path")
+        content = str(para.get("content") or "")
+        t = (needle or "").strip()
+        if not t:
+            start = 0
+            end = min(len(content), 64)
+            return node_id, path, start, end
+
+        start = content.find(t)
+        if start < 0:
+            n1 = _normalize_for_match(content).replace(" ", "")
+            n2 = _normalize_for_match(t).replace(" ", "")
+            idx = n1.find(n2)
+            if idx >= 0:
+                start = idx
+                end = min(len(content), start + len(t))
+                return node_id, path, start, end
+            start = 0
+            end = min(len(content), max(len(t), 64))
+            return node_id, path, start, end
+
+        end = start + len(t)
+        return node_id, path, start, end
 
     def _get_risk_level_for_type(
         self,

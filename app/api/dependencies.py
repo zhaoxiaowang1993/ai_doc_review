@@ -11,6 +11,7 @@ from database.analysis_runs_repository import AnalysisRunsRepository
 from database.issues_repository import IssuesRepository
 from database.rules_repository import RulesRepository
 from database.documents_repository import DocumentsRepository
+from database.document_assets_repository import DocumentAssetsRepository
 
 
 _issues_service: IssuesService | None = None
@@ -91,8 +92,10 @@ async def get_documents_service() -> DocumentsService:
 
         db_client = SQLiteClient()
         repo = DocumentsRepository(db_client)
+        assets_repo = DocumentAssetsRepository(db_client)
         await repo.init()
-        _documents_service = DocumentsService(repo)
+        await assets_repo.init()
+        _documents_service = DocumentsService(repo, assets_repo)
         return _documents_service
 
 

@@ -5,6 +5,7 @@ import type {
   DocumentTypeWithSubtypes, Document, ReviewRulesState
 } from '../types/rule'
 import type { Issue } from '../types/issue'
+import type { DocumentIR } from '../types/document-ir'
 
 function normalizeApiOrigin(value: unknown): string {
   if (!value || typeof value !== 'string') return ''
@@ -350,6 +351,36 @@ export async function downloadDocumentFile(docId: string): Promise<Blob> {
     throw new FatalError(message)
   }
   return response.blob()
+}
+
+export interface IRStatus {
+  doc_id: string
+  status: string
+  error_message: string | null
+}
+
+export async function getDocumentIRStatus(docId: string): Promise<IRStatus> {
+  const response = await fetch(`${documentsApiUrl}/${encodeURIComponent(docId)}/ir-status`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
+}
+
+export async function getDocumentIR(docId: string): Promise<DocumentIR> {
+  const response = await fetch(`${documentsApiUrl}/${encodeURIComponent(docId)}/ir`, {
+    headers: { 'Content-Type': 'application/json' },
+    method: 'GET'
+  })
+  if (!response.ok) {
+    const message = await getErrorMessage(response)
+    throw new FatalError(message)
+  }
+  return response.json()
 }
 
 export async function getDocumentIssues(docId: string): Promise<Issue[]> {

@@ -46,6 +46,11 @@ class AnalysisIssuesRepository:
                 "location_json": json.dumps(issue.location.model_dump(), ensure_ascii=False)
                 if issue.location is not None
                 else None,
+                "location_type": (
+                    (issue.location.type.value if hasattr(issue.location.type, "value") else issue.location.type)
+                    if issue.location is not None
+                    else None
+                ),
                 "para_index": (issue.location.para_index if issue.location is not None else None),
                 "created_at_utc": now,
             }

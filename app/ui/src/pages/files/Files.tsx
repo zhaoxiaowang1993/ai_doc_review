@@ -333,7 +333,7 @@ function Files() {
                 <CloudArrowUpRegular className={classes.uploadIcon} />
               </div>
               <div className={classes.uploadTitle}>拖拽文件到此处上传</div>
-              <div className={classes.uploadHint}>支持 PDF 格式 · 点击选择文件</div>
+              <div className={classes.uploadHint}>支持 PDF / DOCX / TXT 格式 · 点击选择文件</div>
               <div className={classes.statsRow}>
                 <Badge appearance="tint" color="informative" shape="rounded">
                   <DocumentPdfRegular style={{ marginRight: 4 }} />
@@ -363,7 +363,7 @@ function Files() {
                 <SkeletonItem key={i} style={{ height: 120, borderRadius: 10 }} />
               ))}
             {fileList && fileList.length === 0 && (
-              <div className={classes.empty}>暂无文档，请上传 PDF 开始审核</div>
+              <div className={classes.empty}>暂无文档，请上传 PDF / DOCX / TXT 开始审核</div>
             )}
             {recentDocs.map((file) => (
               <div key={file.id} className={classes.docCard}>

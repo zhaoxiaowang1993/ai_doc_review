@@ -12,6 +12,8 @@ import aiosqlite
 from typing import Any, Dict, List, Optional, Sequence
 from pathlib import Path
 from config.config import settings
+from datetime import datetime, timezone
+from uuid import uuid4
 
 
 logging = get_logger(__name__)
@@ -38,6 +40,13 @@ async def _validate_or_raise(db: aiosqlite.Connection) -> None:
             "created_at_utc",
             "created_by",
             "last_run_id",
+            "primary_asset_id",
+            "review_asset_id",
+            "ir_asset_id",
+            "ir_status",
+            "ir_driver_version",
+            "ir_fingerprint",
+            "ir_error_message",
         },
         "issues": {
             "id",
@@ -52,6 +61,7 @@ async def _validate_or_raise(db: aiosqlite.Connection) -> None:
             "suggested_fix",
             "risk_level",
             "location",
+            "location_type",
             "review_initiated_by",
             "review_initiated_at_UTC",
             "resolved_by",
@@ -60,11 +70,35 @@ async def _validate_or_raise(db: aiosqlite.Connection) -> None:
             "dismissal_feedback",
             "feedback",
         },
+        "analysis_issues": {
+            "id",
+            "run_id",
+            "type",
+            "text",
+            "explanation",
+            "suggested_fix",
+            "risk_level",
+            "location_json",
+            "location_type",
+            "para_index",
+            "created_at_utc",
+        },
+        "document_assets": {
+            "id",
+            "document_id",
+            "kind",
+            "storage_provider",
+            "storage_key",
+            "mime_type",
+            "size_bytes",
+            "sha256",
+            "created_at_utc",
+        },
     }
     for table, cols in expected.items():
         existing = set(await _table_columns(db, table))
         if existing and not cols.issubset(existing):
-            raise RuntimeError(f"检测到旧版数据库表结构（{table}），请先运行 clean_local_data.py 清理本地数据后重试。")
+            raise RuntimeError(f"检测到旧版数据库表结构（{table}），请先运行数据库迁移或清理本地数据后重试。")
 
 
 CREATE_ISSUES_TABLE = """
@@ -81,6 +115,7 @@ CREATE TABLE IF NOT EXISTS issues (
     suggested_fix TEXT,
     risk_level TEXT,
     location TEXT,
+    location_type TEXT,
     review_initiated_by TEXT,
     review_initiated_at_UTC TEXT,
     resolved_by TEXT,
@@ -122,10 +157,31 @@ CREATE TABLE IF NOT EXISTS analysis_issues (
     suggested_fix TEXT,
     risk_level TEXT,
     location_json TEXT,
+    location_type TEXT,
     para_index INTEGER,
     created_at_utc TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES analysis_runs(id)
 );
+"""
+
+CREATE_DOCUMENT_ASSETS_TABLE = """
+CREATE TABLE IF NOT EXISTS document_assets (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    storage_provider TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES documents(id)
+);
+"""
+
+CREATE_DOCUMENT_ASSETS_INDEXES = """
+CREATE INDEX IF NOT EXISTS ix_document_assets_doc ON document_assets(document_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_document_assets_key ON document_assets(storage_provider, storage_key);
 """
 
 CREATE_RULES_TABLE = """
@@ -159,6 +215,13 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at_utc TEXT NOT NULL,
     created_by TEXT NOT NULL,
     last_run_id TEXT,
+    primary_asset_id TEXT,
+    review_asset_id TEXT,
+    ir_asset_id TEXT,
+    ir_status TEXT,
+    ir_driver_version TEXT,
+    ir_fingerprint TEXT,
+    ir_error_message TEXT,
     FOREIGN KEY (subtype_id) REFERENCES document_subtypes(id)
 );
 """
@@ -199,6 +262,106 @@ CREATE TABLE IF NOT EXISTS rule_type_relations (
 );
 """
 
+CREATE_SCHEMA_MIGRATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    name TEXT PRIMARY KEY,
+    applied_at_utc TEXT NOT NULL
+);
+"""
+
+
+async def _migration_applied(db: aiosqlite.Connection, name: str) -> bool:
+    cursor = await db.execute("SELECT 1 FROM schema_migrations WHERE name = ? LIMIT 1", (name,))
+    row = await cursor.fetchone()
+    return bool(row)
+
+
+async def _mark_migration_applied(db: aiosqlite.Connection, name: str) -> None:
+    await db.execute(
+        "INSERT OR REPLACE INTO schema_migrations (name, applied_at_utc) VALUES (?, ?)",
+        (name, datetime.now(timezone.utc).isoformat()),
+    )
+
+
+async def _add_column_if_missing(db: aiosqlite.Connection, table: str, column: str, col_def: str) -> None:
+    cols = set(await _table_columns(db, table))
+    if column in cols:
+        return
+    await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+
+
+async def _apply_doc_ir_migration(db: aiosqlite.Connection) -> None:
+    name = "20260313_add_doc_ir_assets_and_location_type"
+    if await _migration_applied(db, name):
+        return
+
+    await db.execute(CREATE_DOCUMENT_ASSETS_TABLE)
+    for stmt in [s.strip() for s in CREATE_DOCUMENT_ASSETS_INDEXES.split(";") if s.strip()]:
+        await db.execute(stmt)
+
+    await _add_column_if_missing(db, "issues", "location_type", "TEXT")
+    await _add_column_if_missing(db, "analysis_issues", "location_type", "TEXT")
+
+    await _add_column_if_missing(db, "documents", "primary_asset_id", "TEXT")
+    await _add_column_if_missing(db, "documents", "review_asset_id", "TEXT")
+    await _add_column_if_missing(db, "documents", "ir_asset_id", "TEXT")
+    await _add_column_if_missing(db, "documents", "ir_status", "TEXT")
+    await _add_column_if_missing(db, "documents", "ir_driver_version", "TEXT")
+    await _add_column_if_missing(db, "documents", "ir_fingerprint", "TEXT")
+    await _add_column_if_missing(db, "documents", "ir_error_message", "TEXT")
+
+    await db.execute(
+        """
+        UPDATE issues
+        SET location_type = 'pdf_quadpoints'
+        WHERE location_type IS NULL
+        """
+    )
+    await db.execute(
+        """
+        UPDATE analysis_issues
+        SET location_type = 'pdf_quadpoints'
+        WHERE location_type IS NULL
+        """
+    )
+
+    cursor = await db.execute("SELECT COUNT(*) FROM document_assets")
+    assets_count = (await cursor.fetchone())[0]
+    if assets_count == 0:
+        db.row_factory = aiosqlite.Row
+        docs = await (await db.execute("SELECT * FROM documents")).fetchall()
+        for d in docs:
+            asset_id = str(uuid4())
+            await db.execute(
+                """
+                INSERT INTO document_assets
+                    (id, document_id, kind, storage_provider, storage_key, mime_type, size_bytes, sha256, created_at_utc)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    asset_id,
+                    d["id"],
+                    "review_pdf",
+                    d["storage_provider"],
+                    d["storage_key"],
+                    d["mime_type"],
+                    d["size_bytes"],
+                    d["sha256"],
+                    d["created_at_utc"],
+                ),
+            )
+            await db.execute(
+                """
+                UPDATE documents
+                SET review_asset_id = COALESCE(review_asset_id, ?),
+                    primary_asset_id = COALESCE(primary_asset_id, ?)
+                WHERE id = ?
+                """,
+                (asset_id, asset_id, d["id"]),
+            )
+
+    await _mark_migration_applied(db, name)
+
 
 class SQLiteClient:
     def __init__(self, db_path: str | None = None) -> None:
@@ -207,7 +370,6 @@ class SQLiteClient:
 
     async def init_db(self) -> None:
         async with aiosqlite.connect(self.db_path) as db:
-            await _validate_or_raise(db)
             await db.execute(CREATE_ISSUES_TABLE)
             await db.execute("CREATE INDEX IF NOT EXISTS ix_issues_owner_doc ON issues(owner_id, document_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS ix_issues_source_run ON issues(source_run_id)")
@@ -220,11 +382,17 @@ class SQLiteClient:
             await db.execute(CREATE_DOCUMENTS_TABLE)
             await db.execute("CREATE INDEX IF NOT EXISTS ix_documents_owner ON documents(owner_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS ix_documents_owner_sha ON documents(owner_id, sha256)")
+            await db.execute(CREATE_SCHEMA_MIGRATIONS_TABLE)
             await db.execute(CREATE_DOCUMENT_TYPES_TABLE)
             await db.execute(CREATE_DOCUMENT_SUBTYPES_TABLE)
             await db.execute(CREATE_RULE_SUBTYPE_RELATIONS_TABLE)
             await db.execute(CREATE_RULE_TYPE_RELATIONS_TABLE)
             await db.commit()
+
+            await _apply_doc_ir_migration(db)
+            await db.commit()
+
+            await _validate_or_raise(db)
 
             # Seed initial document types if empty
             cursor = await db.execute("SELECT COUNT(*) FROM document_types")

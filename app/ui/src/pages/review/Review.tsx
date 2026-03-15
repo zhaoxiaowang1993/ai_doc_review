@@ -8,6 +8,7 @@ import 'react-pdf/dist/Page/TextLayer.css'
 import './ReviewPage.css'
 import { IssueDetailsPanel } from '../../components/IssueDetailsPanel'
 import { IssueListItem } from '../../components/IssueListItem'
+import { DocumentIRViewer } from '../../components/DocumentIRViewer'
 import { addAnnotation, deleteAnnotation, initAnnotations } from '../../services/annotations'
 import { streamApi, getDocument, getDocumentTypes, getReviewRulesState, downloadDocumentFile, getDocumentIssues, getReviewStatus, startReview } from '../../services/api'
 import { APIEvent } from '../../types/api-events'
@@ -22,6 +23,7 @@ function Review() {
   const [searchParams] = useSearchParams()
 
   const [docId, setDocId] = useState<string>()
+  const [docMimeType, setDocMimeType] = useState<string>()
   const [pdfData, setPdfData] = useState<{ data: Uint8Array }>()
   const [pdfLoadError, setPdfLoadError] = useState<string>()
   const [numPages, setNumPages] = useState<number>()
@@ -55,6 +57,7 @@ function Review() {
   const latestRuleIdsRef = useRef<string[]>([])
   const pdfContainerRef = useRef<HTMLDivElement>(null)
   const selectedAnnotIdRef = useRef<string>()
+  const isPdfDoc = (docMimeType ?? '').startsWith('application/pdf')
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -67,7 +70,7 @@ function Review() {
   )
 
   const selectedAnchors = useMemo(() => {
-    const anchors = selectedIssue?.location?.anchors
+    const anchors = (selectedIssue?.location as any)?.anchors
     return Array.isArray(anchors) ? anchors : []
   }, [selectedIssue])
 
@@ -92,7 +95,7 @@ function Review() {
 
   const gotoAnchor = useCallback((index: number) => {
     if (!selectedIssue) return
-    const anchors = Array.isArray(selectedIssue.location?.anchors) ? selectedIssue.location.anchors : []
+    const anchors = Array.isArray((selectedIssue.location as any)?.anchors) ? (selectedIssue.location as any).anchors : []
     const target = anchors[index]
     if (!target?.page_num || !target?.bounding_box?.length) return
     setSelectedAnchorIndex(index)
@@ -121,7 +124,30 @@ function Review() {
           ) && !hideTypesFilter.includes(issue.type),
       )
       .slice()
-      .sort((a, b) => (a.location?.page_num ?? 0) - (b.location?.page_num ?? 0))
+      .sort((a, b) => {
+        const al = a.location as any
+        const bl = b.location as any
+        const at = al?.type
+        const bt = bl?.type
+
+        if (at === 'ir_anchor' && bt === 'ir_anchor') {
+          const ai = Number(al?.para_index)
+          const bi = Number(bl?.para_index)
+          const aiOk = Number.isFinite(ai)
+          const biOk = Number.isFinite(bi)
+          if (aiOk && biOk && ai !== bi) return ai - bi
+          if (aiOk && !biOk) return -1
+          if (!aiOk && biOk) return 1
+          const an = String(al?.node_id ?? '')
+          const bn = String(bl?.node_id ?? '')
+          if (an && bn && an !== bn) return an.localeCompare(bn)
+          return 0
+        }
+
+        const ap = Number(al?.page_num ?? al?.para_index ?? 0)
+        const bp = Number(bl?.page_num ?? bl?.para_index ?? 0)
+        return ap - bp
+      })
   }, [issues, statusFilter, hideTypesFilter])
 
   const types = useMemo(() => {
@@ -216,9 +242,10 @@ function Review() {
             })
             let pdfBytesWithAnnotations: Uint8Array | undefined
             for (const i of newIssues) {
-              if (i.location && i.location.page_num && i.location.bounding_box?.length) {
+              const loc = i.location as any
+              if (loc && loc.page_num && loc.bounding_box?.length) {
                 try {
-                  ;[pdfBytesWithAnnotations] = addAnnotation(i.location.page_num, i.location.bounding_box)
+                  ;[pdfBytesWithAnnotations] = addAnnotation(loc.page_num, loc.bounding_box)
                 } catch {
                   // ignore
                 }
@@ -276,10 +303,12 @@ function Review() {
   }
 
   function handleSelectIssue(issue: Issue) {
+    const isPdf = (docMimeType ?? '').startsWith('application/pdf')
     // 检查是否点击同一个 issue（取消选择）
     if (selectedIssueId === issue.id) {
       setSelectedIssueId(undefined)
       setSelectedAnchorIndex(0)
+      if (!isPdf) return
       try {
         if (selectedAnnotIdRef.current) {
           const pdfBytes = deleteAnnotation(selectedAnnotIdRef.current)
@@ -293,6 +322,10 @@ function Review() {
 
     // 清除旧的注释
     setSelectedAnchorIndex(0)
+    if (!isPdf) {
+      setSelectedIssueId(issue.id)
+      return
+    }
     try {
       if (selectedAnnotIdRef.current) {
         const pdfBytes = deleteAnnotation(selectedAnnotIdRef.current)
@@ -305,8 +338,8 @@ function Review() {
     // 设置新选中的 issue
     setSelectedIssueId(issue.id)
 
-    const anchors = Array.isArray(issue.location?.anchors) ? issue.location.anchors : []
-    const target = anchors[0] ?? issue.location
+    const anchors = Array.isArray((issue.location as any)?.anchors) ? (issue.location as any).anchors : []
+    const target = anchors[0] ?? (issue.location as any)
     if (target?.page_num) setPageNumber(target.page_num)
     if (target?.bounding_box?.length) applyHighlight(target.page_num, target.bounding_box)
   }
@@ -333,6 +366,7 @@ function Review() {
       if (!docId) return
       try {
         const docMeta = await getDocument(docId)
+        setDocMimeType(docMeta?.mime_type)
         if (docMeta?.subtype_id) {
           // 获取分类名称用于展示
           const types = await getDocumentTypes()
@@ -364,8 +398,14 @@ function Review() {
         setPdfLoadError(`加载失败：${e instanceof Error ? e.message : String(e)}`)
       }
     }
-    if (docId) loadPdf(docId)
-  }, [docId])
+    if (!docId) return
+    if ((docMimeType ?? '').startsWith('application/pdf')) {
+      loadPdf(docId)
+      return
+    }
+    setPdfData(undefined)
+    setPdfLoadError(undefined)
+  }, [docId, docMimeType])
 
   useEffect(() => {
     refreshRulesState()
@@ -509,37 +549,55 @@ function Review() {
       {/* CENTER */}
       <div className="review-panel review-center">
         <div className="review-toolbar">
-          <div className="review-toolbar-section">
-            <Button size="small" icon={<UpOutlined />} onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber === 1} />
-            <Button size="small" icon={<DownOutlined />} onClick={() => setPageNumber((p) => Math.min(numPages ?? p + 1, p + 1))} disabled={!!numPages && pageNumber === numPages} />
-            <span className="review-page-info">{pageNumber}/{numPages ?? '-'}</span>
-            {canNavigateAnchors && (
-              <>
-                <Button size="small" icon={<LeftOutlined />} onClick={gotoPrevAnchor} disabled={selectedAnchorIndex <= 0} />
-                <span className="review-page-info">命中 {selectedAnchorIndex + 1}/{selectedAnchors.length}</span>
-                <Button size="small" icon={<RightOutlined />} onClick={gotoNextAnchor} disabled={selectedAnchorIndex >= selectedAnchors.length - 1} />
-              </>
-            )}
-          </div>
-          <div className="review-toolbar-section">
-            <Button size="small" icon={<ZoomOutOutlined />} onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} />
-            <span className="review-zoom-info">{Math.round(zoom * 100)}%</span>
-            <Button size="small" icon={<ZoomInOutlined />} onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))} />
-            <Button size="small" type="primary" icon={checkButtonIcon} loading={checkInProgress} onClick={handleReReview}>
-              重新审阅
-            </Button>
-          </div>
+          {isPdfDoc ? (
+            <>
+              <div className="review-toolbar-section">
+                <Button size="small" icon={<UpOutlined />} onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber === 1} />
+                <Button size="small" icon={<DownOutlined />} onClick={() => setPageNumber((p) => Math.min(numPages ?? p + 1, p + 1))} disabled={!!numPages && pageNumber === numPages} />
+                <span className="review-page-info">{pageNumber}/{numPages ?? '-'}</span>
+                {canNavigateAnchors && (
+                  <>
+                    <Button size="small" icon={<LeftOutlined />} onClick={gotoPrevAnchor} disabled={selectedAnchorIndex <= 0} />
+                    <span className="review-page-info">命中 {selectedAnchorIndex + 1}/{selectedAnchors.length}</span>
+                    <Button size="small" icon={<RightOutlined />} onClick={gotoNextAnchor} disabled={selectedAnchorIndex >= selectedAnchors.length - 1} />
+                  </>
+                )}
+              </div>
+              <div className="review-toolbar-section">
+                <Button size="small" icon={<ZoomOutOutlined />} onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} />
+                <span className="review-zoom-info">{Math.round(zoom * 100)}%</span>
+                <Button size="small" icon={<ZoomInOutlined />} onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))} />
+                <Button size="small" type="primary" icon={checkButtonIcon} loading={checkInProgress} onClick={handleReReview}>
+                  重新审阅
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="review-toolbar-section">
+              <Button size="small" type="primary" icon={checkButtonIcon} loading={checkInProgress} onClick={handleReReview}>
+                重新审阅
+              </Button>
+            </div>
+          )}
         </div>
         <div ref={pdfContainerRef} className="review-pdf-compare-container review-pdf-compare-single">
           <div className="review-pdf-pane">
             <div className="review-pdf-wrap">
               <div className="review-pdf-card">
-                {pdfLoadError && (
-                  <Alert type="error" showIcon message={pdfLoadError} />
+                {isPdfDoc ? (
+                  <>
+                    {pdfLoadError && (
+                      <Alert type="error" showIcon message={pdfLoadError} />
+                    )}
+                    <Document file={pdfData} onLoadSuccess={onDocumentLoadSuccess} loading={<Spin />} noData={<Spin />}>
+                      <Page pageNumber={pageNumber} width={Math.floor(pdfContainerWidth * zoom)} loading={<Spin />} />
+                    </Document>
+                  </>
+                ) : (
+                  <>
+                    {docId ? <DocumentIRViewer docId={docId} selectedIssue={selectedIssue} /> : null}
+                  </>
                 )}
-                <Document file={pdfData} onLoadSuccess={onDocumentLoadSuccess} loading={<Spin />} noData={<Spin />}>
-                  <Page pageNumber={pageNumber} width={Math.floor(pdfContainerWidth * zoom)} loading={<Spin />} />
-                </Document>
               </div>
             </div>
           </div>

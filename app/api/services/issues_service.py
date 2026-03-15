@@ -5,7 +5,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import asyncio
-from common.models import Issue, IssueStatusEnum, ModifiedFieldsModel, DismissalFeedbackModel, ReviewRule
+from common.models import DocumentIR, Issue, IssueStatusEnum, ModifiedFieldsModel, DismissalFeedbackModel, ReviewRule
 from database.analysis_issues_repository import AnalysisIssuesRepository
 from database.analysis_runs_repository import AnalysisRunsRepository
 from database.documents_repository import DocumentsRepository
@@ -189,6 +189,107 @@ class IssuesService:
             )
             return {"doc_id": document_id, "run_id": run_id, "status": self.STATUS_RUNNING, "error_message": None}
 
+    async def start_ir_review_in_background(
+        self,
+        *,
+        document_id: str,
+        owner_id: str,
+        subtype_id: str,
+        ir: DocumentIR,
+        user: User,
+        time_stamp: datetime | str,
+        rules_snapshot_json: str,
+        rules_fingerprint: str,
+        pipeline_version: str,
+        input_fingerprint: str,
+        force: bool = False,
+        custom_rules: List[ReviewRule] | None = None,
+    ) -> Dict[str, Any]:
+        timestamp_iso = time_stamp.isoformat() if isinstance(time_stamp, datetime) else str(time_stamp)
+
+        if force:
+            await self.cancel_review(document_id, owner_id=owner_id)
+            await self.issues_repository.delete_issues_by_doc(document_id, owner_id=owner_id)
+
+        async with self._review_tasks_lock:
+            status = await self.get_review_status(document_id, owner_id=owner_id)
+            existing_run_id = status.get("run_id")
+            existing_status = status.get("status")
+
+            if existing_run_id and existing_status in (self.STATUS_RUNNING, self.STATUS_CANCEL_REQUESTED):
+                return status
+
+            if not force:
+                existing_issues = await self.issues_repository.get_issues(document_id, owner_id=owner_id)
+                if existing_issues:
+                    return {
+                        "doc_id": document_id,
+                        "run_id": existing_run_id,
+                        "status": self.STATUS_COMPLETED,
+                        "error_message": None,
+                    }
+
+            cached = await self.analysis_runs_repository.get_by_key(
+                owner_id=owner_id,
+                sha256=input_fingerprint,
+                rules_fingerprint=rules_fingerprint,
+                pipeline_version=pipeline_version,
+            )
+            if cached and (cached.get("status") == self.STATUS_COMPLETED) and not force:
+                await self.documents_repository.update_last_run_id(document_id, owner_id=owner_id, last_run_id=cached["id"])
+                await self.clone_issues_from_analysis_run(
+                    document_id=document_id,
+                    owner_id=owner_id,
+                    run_id=cached["id"],
+                    review_initiated_by=user.oid,
+                    review_initiated_at_utc=timestamp_iso,
+                )
+                return {"doc_id": document_id, "run_id": cached["id"], "status": self.STATUS_COMPLETED, "error_message": None}
+
+            if cached and cached.get("status") != self.STATUS_COMPLETED and not force:
+                run_id = cached["id"]
+                await self.analysis_runs_repository.update(
+                    run_id,
+                    owner_id=owner_id,
+                    fields={
+                        "subtype_id": subtype_id,
+                        "rules_snapshot_json": rules_snapshot_json,
+                        "created_at_utc": timestamp_iso,
+                        "status": self.STATUS_RUNNING,
+                        "error_message": None,
+                    },
+                )
+            else:
+                run_id = str(uuid4())
+                await self.analysis_runs_repository.create(
+                    {
+                        "id": run_id,
+                        "owner_id": owner_id,
+                        "sha256": input_fingerprint,
+                        "subtype_id": subtype_id,
+                        "rules_fingerprint": rules_fingerprint,
+                        "rules_snapshot_json": rules_snapshot_json,
+                        "pipeline_version": pipeline_version,
+                        "mineru_cache_key": input_fingerprint,
+                        "created_at_utc": timestamp_iso,
+                        "status": self.STATUS_RUNNING,
+                        "error_message": None,
+                    }
+                )
+
+            await self.documents_repository.update_last_run_id(document_id, owner_id=owner_id, last_run_id=run_id)
+            self._spawn_ir_review_task(
+                owner_id=owner_id,
+                document_id=document_id,
+                run_id=run_id,
+                ir=ir,
+                user=user,
+                timestamp_iso=timestamp_iso,
+                input_fingerprint=input_fingerprint,
+                custom_rules=custom_rules,
+            )
+            return {"doc_id": document_id, "run_id": run_id, "status": self.STATUS_RUNNING, "error_message": None}
+
     async def cancel_review(self, document_id: str, *, owner_id: str) -> Dict[str, Any]:
         run_id = await self._get_run_id_for_doc(document_id, owner_id=owner_id)
         if run_id:
@@ -301,6 +402,107 @@ class IssuesService:
                 pass
 
         task.add_done_callback(_cleanup)
+
+    def _spawn_ir_review_task(
+        self,
+        *,
+        owner_id: str,
+        document_id: str,
+        run_id: str,
+        ir: DocumentIR,
+        user: User,
+        timestamp_iso: str,
+        input_fingerprint: str,
+        custom_rules: List[ReviewRule] | None,
+    ) -> None:
+        key = (owner_id, document_id)
+
+        async def runner():
+            await self._run_ir_review_pipeline(
+                owner_id=owner_id,
+                document_id=document_id,
+                run_id=run_id,
+                ir=ir,
+                user=user,
+                timestamp_iso=timestamp_iso,
+                input_fingerprint=input_fingerprint,
+                custom_rules=custom_rules,
+            )
+
+        task = asyncio.create_task(runner())
+        self._review_tasks[key] = task
+
+        def _cleanup(_t: asyncio.Task) -> None:
+            try:
+                if self._review_tasks.get(key) is _t:
+                    self._review_tasks.pop(key, None)
+            except Exception:
+                pass
+
+        task.add_done_callback(_cleanup)
+
+    async def _run_ir_review_pipeline(
+        self,
+        *,
+        owner_id: str,
+        document_id: str,
+        run_id: str,
+        ir: DocumentIR,
+        user: User,
+        timestamp_iso: str,
+        input_fingerprint: str,
+        custom_rules: List[ReviewRule] | None,
+    ) -> None:
+        try:
+            stream_data = self.pipeline.stream_ir_issues(
+                doc_id=document_id,
+                ir=ir,
+                user_id=user.oid,
+                timestamp_iso=timestamp_iso,
+                custom_rules=custom_rules,
+            )
+            async for issues in stream_data:
+                row = await self.analysis_runs_repository.get_by_id(run_id, owner_id=owner_id)
+                if row and row.get("status") == self.STATUS_CANCEL_REQUESTED:
+                    await self.analysis_runs_repository.update(
+                        run_id,
+                        owner_id=owner_id,
+                        fields={"status": self.STATUS_CANCELLED, "error_message": "任务已取消"},
+                    )
+                    return
+
+                for issue in issues:
+                    issue.owner_id = owner_id
+                    issue.source_run_id = run_id
+                    issue.source_issue_id = None
+                await self.issues_repository.store_issues(issues)
+                await self.analysis_issues_repository.store_issues(run_id, issues)
+
+            await self.analysis_runs_repository.update(
+                run_id,
+                owner_id=owner_id,
+                fields={"status": self.STATUS_COMPLETED, "error_message": None},
+            )
+        except asyncio.CancelledError:
+            try:
+                await self.analysis_runs_repository.update(
+                    run_id,
+                    owner_id=owner_id,
+                    fields={"status": self.STATUS_CANCELLED, "error_message": "任务已取消"},
+                )
+            except Exception:
+                pass
+            return
+        except Exception as e:
+            logging.error(f"Error initiating IR review for document {document_id}: {str(e)}")
+            try:
+                await self.analysis_runs_repository.update(
+                    run_id,
+                    owner_id=owner_id,
+                    fields={"status": self.STATUS_FAILED, "error_message": str(e)},
+                )
+            except Exception:
+                pass
 
     async def _run_review_pipeline(
         self,
