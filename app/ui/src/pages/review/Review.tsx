@@ -24,6 +24,8 @@ function Review() {
 
   const [docId, setDocId] = useState<string>()
   const [docMimeType, setDocMimeType] = useState<string>()
+  const [docMetaLoaded, setDocMetaLoaded] = useState(false)
+  const [docMetaError, setDocMetaError] = useState<string>()
   const [pdfData, setPdfData] = useState<{ data: Uint8Array }>()
   const [pdfLoadError, setPdfLoadError] = useState<string>()
   const [numPages, setNumPages] = useState<number>()
@@ -57,6 +59,10 @@ function Review() {
   const latestRuleIdsRef = useRef<string[]>([])
   const pdfContainerRef = useRef<HTMLDivElement>(null)
   const selectedAnnotIdRef = useRef<string>()
+  const yellowAnnotIdsRef = useRef<string[]>([])
+  const yellowAppliedDocIdRef = useRef<string>()
+  const loadedExistingIssuesRef = useRef(false)
+  const ranCheckInSessionRef = useRef(false)
   const isPdfDoc = (docMimeType ?? '').startsWith('application/pdf')
 
   // Keep ref in sync with state
@@ -199,6 +205,7 @@ function Review() {
 
   const runCheck = useCallback((force = false, reset = true) => {
     if (!docId) return
+    ranCheckInSessionRef.current = true
     setCheckInProgress(true)
     setCheckError(undefined)
     setCheckComplete(false)
@@ -360,27 +367,40 @@ function Review() {
     else setPdfLoadError('URL 中未指定文档')
   }, [searchParams])
 
+  useEffect(() => {
+    yellowAnnotIdsRef.current = []
+    yellowAppliedDocIdRef.current = undefined
+    selectedAnnotIdRef.current = undefined
+    loadedExistingIssuesRef.current = false
+    ranCheckInSessionRef.current = false
+  }, [docId])
+
   // 加载文档元数据获取分类信息
   useEffect(() => {
     async function loadDocumentMetadata() {
       if (!docId) return
+      setDocMetaLoaded(false)
+      setDocMetaError(undefined)
       try {
         const docMeta = await getDocument(docId)
         setDocMimeType(docMeta?.mime_type)
         if (docMeta?.subtype_id) {
-          // 获取分类名称用于展示
-          const types = await getDocumentTypes()
-          for (const type of types) {
-            const subtype = type.subtypes.find(s => s.id === docMeta.subtype_id)
-            if (subtype) {
-              setDocumentCategoryLabel(`${type.name} / ${subtype.name}`)
-              break
+          try {
+            const types = await getDocumentTypes()
+            for (const type of types) {
+              const subtype = type.subtypes.find(s => s.id === docMeta.subtype_id)
+              if (subtype) {
+                setDocumentCategoryLabel(`${type.name} / ${subtype.name}`)
+                break
+              }
             }
+          } catch {
           }
         }
       } catch (e) {
-        // 文档可能没有分类信息（旧文档），静默处理
-        console.log('Document metadata not found:', e)
+        setDocMetaError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setDocMetaLoaded(true)
       }
     }
     loadDocumentMetadata()
@@ -423,6 +443,7 @@ function Review() {
 
         const existing = await getDocumentIssues(docId)
         setIssues(existing)
+        loadedExistingIssuesRef.current = true
 
         const inProgress = status.status === 'running' || status.status === 'cancel_requested'
         const isComplete = status.status === 'completed'
@@ -452,6 +473,42 @@ function Review() {
       }
     }
   }, [docId, runCheck])
+
+  useEffect(() => {
+    if (!docId) return
+    if (!isPdfDoc) return
+    if (!checkComplete) return
+    if (!pdfData?.data) return
+    if (issues.length === 0) return
+    if (yellowAppliedDocIdRef.current === docId) return
+    if (!loadedExistingIssuesRef.current) return
+    if (ranCheckInSessionRef.current) return
+
+    for (const id of yellowAnnotIdsRef.current) {
+      try {
+        deleteAnnotation(id)
+      } catch {
+      }
+    }
+    yellowAnnotIdsRef.current = []
+
+    let pdfBytesWithAnnotations: Uint8Array | undefined
+    for (const issue of issues) {
+      const loc = issue.location as any
+      const anchors = Array.isArray(loc?.anchors) ? loc.anchors : [loc]
+      for (const a of anchors) {
+        if (!a?.page_num || !a?.bounding_box?.length) continue
+        try {
+          const [nextPdfBytes, annot] = addAnnotation(a.page_num, a.bounding_box)
+          pdfBytesWithAnnotations = nextPdfBytes
+          yellowAnnotIdsRef.current.push(annot.id)
+        } catch {
+        }
+      }
+    }
+    if (pdfBytesWithAnnotations) setPdfData({ data: pdfBytesWithAnnotations })
+    yellowAppliedDocIdRef.current = docId
+  }, [checkComplete, docId, isPdfDoc, issues, pdfData])
 
   // Update PDF container width on resize
   useEffect(() => {
@@ -584,7 +641,11 @@ function Review() {
           <div className="review-pdf-pane">
             <div className="review-pdf-wrap">
               <div className="review-pdf-card">
-                {isPdfDoc ? (
+                {!docMetaLoaded ? (
+                  <div style={{ padding: 16 }}><Spin /></div>
+                ) : docMetaError ? (
+                  <div style={{ padding: 16 }}><Alert type="error" showIcon message={`加载文档信息失败：${docMetaError}`} /></div>
+                ) : isPdfDoc ? (
                   <>
                     {pdfLoadError && (
                       <Alert type="error" showIcon message={pdfLoadError} />
@@ -595,7 +656,7 @@ function Review() {
                   </>
                 ) : (
                   <>
-                    {docId ? <DocumentIRViewer docId={docId} selectedIssue={selectedIssue} /> : null}
+                    {docId ? <DocumentIRViewer docId={docId} issues={issues} selectedIssue={selectedIssue} /> : null}
                   </>
                 )}
               </div>

@@ -16,25 +16,63 @@ function paragraphText(p: IRParagraph): string {
   return (p.runs ?? []).map(r => r.text ?? '').join('')
 }
 
-function HighlightedText(props: { text: string, start?: number, end?: number }) {
-  const { text, start, end } = props
-  if (typeof start !== 'number' || typeof end !== 'number' || start < 0 || end <= start || start >= text.length) {
-    return <>{text}</>
-  }
-  const a = text.slice(0, start)
-  const b = text.slice(start, Math.min(end, text.length))
-  const c = text.slice(Math.min(end, text.length))
-  return (
-    <>
-      {a}
-      <mark style={{ backgroundColor: 'rgba(255, 64, 64, 0.35)' }}>{b}</mark>
-      {c}
-    </>
-  )
+type TextRange = { start: number, end: number, tone: 'yellow' | 'red', priority: number }
+
+function clampRange(r: { start: number, end: number }, len: number): { start: number, end: number } | null {
+  const start = Math.max(0, Math.min(len, r.start))
+  const end = Math.max(0, Math.min(len, r.end))
+  if (end <= start) return null
+  return { start, end }
 }
 
-export function DocumentIRViewer(props: { docId: string, selectedIssue?: Issue }) {
-  const { docId, selectedIssue } = props
+function rangeColor(tone: TextRange['tone']): string {
+  if (tone === 'red') return 'rgba(255, 64, 64, 0.35)'
+  return 'rgba(255, 255, 0, 0.35)'
+}
+
+function renderHighlightedText(text: string, ranges: TextRange[]): JSX.Element {
+  if (!text) return <></>
+  if (!ranges.length) return <>{text}</>
+
+  const normalized: TextRange[] = []
+  for (const r of ranges) {
+    const cr = clampRange(r, text.length)
+    if (!cr) continue
+    normalized.push({ ...r, start: cr.start, end: cr.end })
+  }
+  if (!normalized.length) return <>{text}</>
+
+  const points = new Set<number>([0, text.length])
+  for (const r of normalized) {
+    points.add(r.start)
+    points.add(r.end)
+  }
+  const sorted = Array.from(points).sort((a, b) => a - b)
+
+  const out: Array<string | JSX.Element> = []
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    if (b <= a) continue
+    const seg = text.slice(a, b)
+    let best: TextRange | undefined
+    for (const r of normalized) {
+      if (r.start <= a && r.end >= b) {
+        if (!best || r.priority > best.priority) best = r
+      }
+    }
+    if (!best) {
+      out.push(seg)
+    } else {
+      out.push(<mark key={`${a}-${b}-${best.tone}`} style={{ backgroundColor: rangeColor(best.tone) }}>{seg}</mark>)
+    }
+  }
+
+  return <>{out}</>
+}
+
+export function DocumentIRViewer(props: { docId: string, issues?: Issue[], selectedIssue?: Issue }) {
+  const { docId, issues, selectedIssue } = props
   const [ir, setIr] = useState<DocumentIR>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
@@ -49,6 +87,28 @@ export function DocumentIRViewer(props: { docId: string, selectedIssue?: Issue }
       end: (loc as any).end_offset as number | undefined,
     }
   }, [selectedIssue])
+
+  const rangesByNodeId = useMemo(() => {
+    const map = new Map<string, TextRange[]>()
+    for (const issue of issues ?? []) {
+      const loc = issue.location
+      if (!loc || typeof loc !== 'object') continue
+      if ((loc as any).type !== 'ir_anchor') continue
+      const nodeId = (loc as any).node_id as string | undefined
+      const start = (loc as any).start_offset as number | undefined
+      const end = (loc as any).end_offset as number | undefined
+      if (!nodeId || typeof start !== 'number' || typeof end !== 'number') continue
+      const arr = map.get(nodeId) ?? []
+      arr.push({ start, end, tone: 'yellow', priority: 0 })
+      map.set(nodeId, arr)
+    }
+    if (anchor?.nodeId && typeof anchor.start === 'number' && typeof anchor.end === 'number') {
+      const arr = map.get(anchor.nodeId) ?? []
+      arr.push({ start: anchor.start, end: anchor.end, tone: 'red', priority: 1 })
+      map.set(anchor.nodeId, arr)
+    }
+    return map
+  }, [anchor, issues])
 
   useEffect(() => {
     let cancelled = false
@@ -87,10 +147,9 @@ export function DocumentIRViewer(props: { docId: string, selectedIssue?: Issue }
       {(ir.blocks ?? []).map((b) => {
         if (isParagraph(b)) {
           const text = paragraphText(b)
-          const isHit = anchor?.nodeId === b.id
           return (
             <p key={b.id} data-ir-node-id={b.id} style={{ margin: '8px 0', lineHeight: 1.6 }}>
-              <HighlightedText text={text} start={isHit ? anchor?.start : undefined} end={isHit ? anchor?.end : undefined} />
+              {renderHighlightedText(text, rangesByNodeId.get(b.id) ?? [])}
             </p>
           )
         }
@@ -104,10 +163,9 @@ export function DocumentIRViewer(props: { docId: string, selectedIssue?: Issue }
                       <td key={c.id} style={{ border: '1px solid #e5e7eb', verticalAlign: 'top', padding: 8 }}>
                         {(c.blocks ?? []).map((p) => {
                           const text = paragraphText(p)
-                          const isHit = anchor?.nodeId === p.id
                           return (
                             <p key={p.id} data-ir-node-id={p.id} style={{ margin: 0, lineHeight: 1.6 }}>
-                              <HighlightedText text={text} start={isHit ? anchor?.start : undefined} end={isHit ? anchor?.end : undefined} />
+                              {renderHighlightedText(text, rangesByNodeId.get(p.id) ?? [])}
                             </p>
                           )
                         })}
@@ -124,4 +182,3 @@ export function DocumentIRViewer(props: { docId: string, selectedIssue?: Issue }
     </div>
   )
 }
-
