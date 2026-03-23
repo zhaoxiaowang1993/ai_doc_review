@@ -50,6 +50,7 @@ function Review() {
   const [reviewRulesLoading, setReviewRulesLoading] = useState(false)
   const [reviewRulesError, setReviewRulesError] = useState<string>()
   const [rulesChangedSinceReview, setRulesChangedSinceReview] = useState(false)
+  const [irReloadToken, setIrReloadToken] = useState(0)
 
   // 文档分类信息
   const [documentCategoryLabel, setDocumentCategoryLabel] = useState<string>()
@@ -361,6 +362,10 @@ function Review() {
     })
   }
 
+  const handleIrMaybeUpdated = useCallback(() => {
+    setIrReloadToken((v) => v + 1)
+  }, [])
+
   useEffect(() => {
     const d = searchParams.get('doc_id')
     if (d) setDocId(d)
@@ -594,7 +599,7 @@ function Review() {
           ))}
           {checkInProgress && (
             <div className="review-analyze-status">
-              <Spin size="small" /> 分析中…
+              <Spin size="small" /> 分析中…首次分析会消耗更多时间，含表格的 PDF 会审核更久。您可以随时离开此页面，待审核完成后回来查看结果。
             </div>
           )}
           {!checkInProgress && filteredIssues.length === 0 && (
@@ -656,7 +661,7 @@ function Review() {
                   </>
                 ) : (
                   <>
-                    {docId ? <DocumentIRViewer docId={docId} issues={issues} selectedIssue={selectedIssue} /> : null}
+                    {docId ? <DocumentIRViewer docId={docId} issues={issues} selectedIssue={selectedIssue} reloadToken={irReloadToken} /> : null}
                   </>
                 )}
               </div>
@@ -702,7 +707,7 @@ function Review() {
         </Card>
 
         <div className="review-right-body">
-          <IssueDetailsPanel docId={docId ?? ''} issue={selectedIssue} onUpdate={handleUpdateIssue} />
+          <IssueDetailsPanel docId={docId ?? ''} issue={selectedIssue} onUpdate={handleUpdateIssue} onIrMaybeUpdated={handleIrMaybeUpdated} />
         </div>
 
         <Drawer

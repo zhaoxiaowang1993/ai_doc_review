@@ -12,6 +12,8 @@ from database.issues_repository import IssuesRepository
 from database.rules_repository import RulesRepository
 from database.documents_repository import DocumentsRepository
 from database.document_assets_repository import DocumentAssetsRepository
+from database.review_tasks_repository import ReviewTasksRepository
+from database.review_audits_repository import ReviewAuditsRepository
 
 
 _issues_service: IssuesService | None = None
@@ -48,12 +50,29 @@ async def get_issues_service() -> IssuesService:
         analysis_runs_repo = AnalysisRunsRepository(db_client)
         analysis_issues_repo = AnalysisIssuesRepository(db_client)
         documents_repo = DocumentsRepository(db_client)
+        assets_repo = DocumentAssetsRepository(db_client)
+        review_tasks_repo = ReviewTasksRepository(db_client)
+        review_audits_repo = ReviewAuditsRepository(db_client)
         await issues_repo.init()
         await analysis_runs_repo.init()
         await analysis_issues_repo.init()
         await documents_repo.init()
+        await assets_repo.init()
+        await review_tasks_repo.init()
+        await review_audits_repo.init()
         pipeline = LangChainPipeline()
-        _issues_service = IssuesService(issues_repo, analysis_runs_repo, analysis_issues_repo, documents_repo, pipeline)
+        storage = LocalStorageProvider()
+        _issues_service = IssuesService(
+            issues_repo,
+            analysis_runs_repo,
+            analysis_issues_repo,
+            documents_repo,
+            pipeline,
+            review_tasks_repository=review_tasks_repo,
+            review_audits_repository=review_audits_repo,
+            document_assets_repository=assets_repo,
+            storage_provider=storage,
+        )
         return _issues_service
 
 

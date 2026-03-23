@@ -63,7 +63,7 @@ class IssuesRepository:
         import json
 
         out = dict(item)
-        for key in ["location", "modified_fields", "dismissal_feedback", "feedback"]:
+        for key in ["location", "modified_fields", "dismissal_feedback", "feedback", "triggered_rules_snapshot"]:
             if key not in out or out[key] is None:
                 continue
             if isinstance(out[key], (dict, list)):
@@ -84,7 +84,7 @@ class IssuesRepository:
         elif loc is None:
             data["location_type"] = None
         # Flatten nested objects to JSON strings for SQLite storage
-        for key in ["location", "modified_fields", "dismissal_feedback", "feedback"]:
+        for key in ["location", "modified_fields", "dismissal_feedback", "feedback", "triggered_rules_snapshot"]:
             if key in data and data[key] is not None:
                 data[key] = json.dumps(data[key])
         return data
@@ -97,7 +97,7 @@ class IssuesRepository:
 
     def _deserialize_issue(self, item: Dict[str, Any]) -> Dict[str, Any]:
         import json
-        for key in ["location", "modified_fields", "dismissal_feedback", "feedback"]:
+        for key in ["location", "modified_fields", "dismissal_feedback", "feedback", "triggered_rules_snapshot"]:
             if key in item and item[key] and isinstance(item[key], str):
                 try:
                     item[key] = json.loads(item[key])

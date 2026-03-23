@@ -182,6 +182,28 @@ class DismissalFeedbackModel(BaseModel):
     reason: Optional[str] = None
 
 
+class TriggeredRuleSnapshotItem(BaseModel):
+    rule_name: str
+    rule_content: str
+    rule_id: Optional[str] = None
+    risk_level: Optional[RiskLevel] = None
+
+
+class TaskExecutionModeEnum(str, Enum):
+    store_only = "store_only"
+    auto_apply = "auto_apply"
+    notify_only = "notify_only"
+
+
+class TaskStatusEnum(str, Enum):
+    created = "created"
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    skipped = "skipped"
+
+
 class Issue(BaseModel):
     id: str
     doc_id: str
@@ -202,6 +224,7 @@ class Issue(BaseModel):
     modified_fields: Optional[ModifiedFieldsModel] = None
     dismissal_feedback: Optional[DismissalFeedbackModel] = None
     feedback: Optional[dict] = None
+    triggered_rules_snapshot: list[TriggeredRuleSnapshotItem] = []
 
     class Config:
         use_enum_values = True
@@ -254,3 +277,19 @@ class IRPatchOp(BaseModel):
 class IRPatch(BaseModel):
     version: str = "irpatch:v1"
     ops: list[IRPatchOp] = []
+
+
+class ReviewTask(BaseModel):
+    id: str
+    owner_id: str
+    doc_id: str
+    issue_id: str
+    issue_action: Literal["accept", "dismiss"]
+    execution_mode: TaskExecutionModeEnum
+    suggestion: str
+    content: str
+    status: TaskStatusEnum
+    created_at_utc: str
+    updated_at_utc: Optional[str] = None
+    error_message: Optional[str] = None
+    revision_asset_id: Optional[str] = None

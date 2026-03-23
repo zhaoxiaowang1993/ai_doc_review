@@ -12,7 +12,14 @@ from services.issues_service import IssuesService
 from services.rules_service import RulesService
 from fastapi.responses import StreamingResponse
 from security.auth import validate_authenticated
-from common.models import DocumentIR, Issue, ModifiedFieldsModel, DismissalFeedbackModel, IssueStatusEnum
+from common.models import (
+    DocumentIR,
+    Issue,
+    ModifiedFieldsModel,
+    DismissalFeedbackModel,
+    IssueStatusEnum,
+    TaskExecutionModeEnum,
+)
 from config.config import settings
 from pydantic import BaseModel
 from services.rules_fingerprint import build_review_rules_snapshot_items, compute_review_rules_fingerprint
@@ -70,6 +77,44 @@ class ReviewStatusResponse(BaseModel):
     run_id: Optional[str] = None
     status: str
     error_message: Optional[str] = None
+
+
+class IssueDecisionRequest(BaseModel):
+    action: Literal["accept", "dismiss"]
+    no_issue: bool = False
+    user_suggestion: Optional[str] = None
+    execution_mode: Optional[TaskExecutionModeEnum] = None
+
+
+class ReviewTaskResponse(BaseModel):
+    id: str
+    owner_id: str
+    document_id: str
+    issue_id: str
+    issue_action: str
+    execution_mode: str
+    suggestion: str
+    content: str
+    status: str
+    created_at_utc: str
+    updated_at_utc: Optional[str] = None
+    error_message: Optional[str] = None
+    revision_asset_id: Optional[str] = None
+
+
+class IssueDecisionResponse(BaseModel):
+    issue: Issue
+    task: Optional[ReviewTaskResponse] = None
+
+
+class ReviewAuditResponse(BaseModel):
+    id: str
+    owner_id: str
+    document_id: str
+    issue_id: Optional[str] = None
+    action: str
+    payload: Dict[str, Any]
+    created_at_utc: str
 
 
 @router.get(
@@ -457,6 +502,143 @@ async def provide_feedback(
     updated_issue = await issues_service.add_feedback(issue_id, user, dismissal_feedback)
     logging.info(f"Issue {issue_id} updated successfully.")
     return updated_issue
+
+
+@router.post(
+    "/api/v1/review/{doc_id}/issues/{issue_id}/decision",
+    summary="Confirm accept/dismiss decision and optionally create task",
+    response_model=IssueDecisionResponse,
+)
+async def decide_issue(
+    doc_id: str,
+    issue_id: str,
+    body: IssueDecisionRequest,
+    user=Depends(validate_authenticated),
+    issues_service: IssuesService = Depends(get_issues_service),
+    documents_service: DocumentsService = Depends(get_documents_service),
+) -> IssueDecisionResponse:
+    issue = await issues_service.issues_repository.get_issue(issue_id, owner_id=user.oid)
+    if issue.doc_id != doc_id:
+        raise HTTPException(status_code=400, detail="Issue does not belong to document")
+
+    if body.action == "accept":
+        updated_issue = await issues_service.accept_issue(issue_id, user, None)
+    else:
+        reason = None
+        if body.no_issue:
+            reason = "审核员判定该段无问题"
+        else:
+            suggestion = (body.user_suggestion or "").strip()
+            if len(suggestion) < 5:
+                raise HTTPException(status_code=400, detail="你认为该段有问题时，修改建议至少 5 个字")
+            reason = suggestion
+        dismissal_feedback = DismissalFeedbackModel(reason=reason) if reason else None
+        updated_issue = await issues_service.dismiss_issue(issue_id, user, dismissal_feedback)
+
+    document = await documents_service.get_document(doc_id, owner_id=user.oid)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    is_pdf = (document.mime_type or "").lower().startswith("application/pdf")
+
+    base_suggestion = (updated_issue.modified_fields.suggested_fix if updated_issue.modified_fields else None) or updated_issue.suggested_fix
+    user_suggestion = (body.user_suggestion or "").strip()
+    if body.action == "accept":
+        effective_suggestion = (base_suggestion or "").strip()
+    elif body.no_issue:
+        effective_suggestion = ""
+    else:
+        effective_suggestion = user_suggestion
+    has_task_payload = bool(effective_suggestion)
+
+    task_response: ReviewTaskResponse | None = None
+    if has_task_payload:
+        execution_mode = body.execution_mode or (
+            TaskExecutionModeEnum.store_only if is_pdf else TaskExecutionModeEnum.auto_apply
+        )
+        if is_pdf:
+            execution_mode = TaskExecutionModeEnum.store_only
+        task = await issues_service.create_review_task_for_issue(
+            doc_id=doc_id,
+            issue_id=issue_id,
+            issue_action=body.action,
+            suggestion=effective_suggestion,
+            content=effective_suggestion,
+            execution_mode=execution_mode,
+            user=user,
+        )
+        if (not is_pdf) and execution_mode == TaskExecutionModeEnum.auto_apply:
+            issues_service.spawn_auto_apply_task(
+                task_id=task["id"],
+                owner_id=user.oid,
+                issue=updated_issue,
+                suggestion=effective_suggestion,
+            )
+            task = await issues_service.get_review_task(task_id=task["id"], owner_id=user.oid)
+        task_response = ReviewTaskResponse(**task)
+
+    return IssueDecisionResponse(issue=updated_issue, task=task_response)
+
+
+@router.get(
+    "/api/v1/review/{doc_id}/tasks",
+    summary="List review tasks by document",
+    response_model=List[ReviewTaskResponse],
+)
+async def list_review_tasks(
+    doc_id: str,
+    user=Depends(validate_authenticated),
+    issues_service: IssuesService = Depends(get_issues_service),
+) -> List[ReviewTaskResponse]:
+    rows = await issues_service.list_review_tasks(doc_id=doc_id, owner_id=user.oid)
+    return [ReviewTaskResponse(**r) for r in rows]
+
+
+@router.get(
+    "/api/v1/review/tasks/{task_id}",
+    summary="Get review task detail",
+    response_model=ReviewTaskResponse,
+)
+async def get_review_task(
+    task_id: str,
+    user=Depends(validate_authenticated),
+    issues_service: IssuesService = Depends(get_issues_service),
+) -> ReviewTaskResponse:
+    task = await issues_service.get_review_task(task_id=task_id, owner_id=user.oid)
+    return ReviewTaskResponse(**task)
+
+
+@router.get(
+    "/api/v1/review/{doc_id}/audits",
+    summary="List review audit logs by document",
+    response_model=List[ReviewAuditResponse],
+)
+async def list_review_audits(
+    doc_id: str,
+    user=Depends(validate_authenticated),
+    issues_service: IssuesService = Depends(get_issues_service),
+) -> List[ReviewAuditResponse]:
+    rows = await issues_service.list_review_audits(doc_id=doc_id, owner_id=user.oid)
+    output: List[ReviewAuditResponse] = []
+    for row in rows:
+        payload_raw = row.get("payload")
+        payload = payload_raw
+        if isinstance(payload_raw, str):
+            try:
+                payload = json.loads(payload_raw)
+            except Exception:
+                payload = {"raw": payload_raw}
+        output.append(
+            ReviewAuditResponse(
+                id=row["id"],
+                owner_id=row["owner_id"],
+                document_id=row["document_id"],
+                issue_id=row.get("issue_id"),
+                action=row["action"],
+                payload=payload if isinstance(payload, dict) else {"value": payload},
+                created_at_utc=row["created_at_utc"],
+            )
+        )
+    return output
 
 
 @router.post(

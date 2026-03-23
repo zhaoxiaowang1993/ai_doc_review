@@ -37,6 +37,14 @@ export interface Issue {
   resolved_at_UTC: string
   modified_fields: ModifiedFields
   dismissal_feedback: DismissalFeedback
+  triggered_rules_snapshot?: TriggeredRuleSnapshotItem[]
+}
+
+export interface TriggeredRuleSnapshotItem {
+  rule_name: string
+  rule_content: string
+  rule_id?: string
+  risk_level?: string
 }
 
 export enum IssueStatus {

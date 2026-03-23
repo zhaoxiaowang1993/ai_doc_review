@@ -69,6 +69,7 @@ async def _validate_or_raise(db: aiosqlite.Connection) -> None:
             "modified_fields",
             "dismissal_feedback",
             "feedback",
+            "triggered_rules_snapshot",
         },
         "analysis_issues": {
             "id",
@@ -81,6 +82,31 @@ async def _validate_or_raise(db: aiosqlite.Connection) -> None:
             "location_json",
             "location_type",
             "para_index",
+            "created_at_utc",
+            "triggered_rules_snapshot",
+        },
+        "review_tasks": {
+            "id",
+            "owner_id",
+            "document_id",
+            "issue_id",
+            "issue_action",
+            "execution_mode",
+            "suggestion",
+            "content",
+            "status",
+            "created_at_utc",
+            "updated_at_utc",
+            "error_message",
+            "revision_asset_id",
+        },
+        "review_audits": {
+            "id",
+            "owner_id",
+            "document_id",
+            "issue_id",
+            "action",
+            "payload",
             "created_at_utc",
         },
         "document_assets": {
@@ -122,7 +148,8 @@ CREATE TABLE IF NOT EXISTS issues (
     resolved_at_UTC TEXT,
     modified_fields TEXT,
     dismissal_feedback TEXT,
-    feedback TEXT
+    feedback TEXT,
+    triggered_rules_snapshot TEXT
 );
 """
 
@@ -160,8 +187,49 @@ CREATE TABLE IF NOT EXISTS analysis_issues (
     location_type TEXT,
     para_index INTEGER,
     created_at_utc TEXT NOT NULL,
+    triggered_rules_snapshot TEXT,
     FOREIGN KEY (run_id) REFERENCES analysis_runs(id)
 );
+"""
+
+CREATE_REVIEW_TASKS_TABLE = """
+CREATE TABLE IF NOT EXISTS review_tasks (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    issue_id TEXT NOT NULL,
+    issue_action TEXT NOT NULL,
+    execution_mode TEXT NOT NULL,
+    suggestion TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT,
+    error_message TEXT,
+    revision_asset_id TEXT
+);
+"""
+
+CREATE_REVIEW_TASKS_INDEXES = """
+CREATE INDEX IF NOT EXISTS ix_review_tasks_owner_doc ON review_tasks(owner_id, document_id);
+CREATE INDEX IF NOT EXISTS ix_review_tasks_issue ON review_tasks(issue_id);
+"""
+
+CREATE_REVIEW_AUDITS_TABLE = """
+CREATE TABLE IF NOT EXISTS review_audits (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    issue_id TEXT,
+    action TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL
+);
+"""
+
+CREATE_REVIEW_AUDITS_INDEXES = """
+CREATE INDEX IF NOT EXISTS ix_review_audits_owner_doc ON review_audits(owner_id, document_id);
+CREATE INDEX IF NOT EXISTS ix_review_audits_issue ON review_audits(issue_id);
 """
 
 CREATE_DOCUMENT_ASSETS_TABLE = """
@@ -363,6 +431,46 @@ async def _apply_doc_ir_migration(db: aiosqlite.Connection) -> None:
     await _mark_migration_applied(db, name)
 
 
+async def _apply_review_task_migration(db: aiosqlite.Connection) -> None:
+    name = "20260320_add_review_tasks_and_triggered_rule_snapshots"
+    if await _migration_applied(db, name):
+        return
+
+    await db.execute(CREATE_REVIEW_TASKS_TABLE)
+    for stmt in [s.strip() for s in CREATE_REVIEW_TASKS_INDEXES.split(";") if s.strip()]:
+        await db.execute(stmt)
+
+    await _add_column_if_missing(db, "issues", "triggered_rules_snapshot", "TEXT")
+    await _add_column_if_missing(db, "analysis_issues", "triggered_rules_snapshot", "TEXT")
+
+    await db.execute(
+        """
+        UPDATE issues
+        SET triggered_rules_snapshot = '[]'
+        WHERE triggered_rules_snapshot IS NULL
+        """
+    )
+    await db.execute(
+        """
+        UPDATE analysis_issues
+        SET triggered_rules_snapshot = '[]'
+        WHERE triggered_rules_snapshot IS NULL
+        """
+    )
+
+    await _mark_migration_applied(db, name)
+
+
+async def _apply_review_audit_migration(db: aiosqlite.Connection) -> None:
+    name = "20260320_add_review_audits"
+    if await _migration_applied(db, name):
+        return
+    await db.execute(CREATE_REVIEW_AUDITS_TABLE)
+    for stmt in [s.strip() for s in CREATE_REVIEW_AUDITS_INDEXES.split(";") if s.strip()]:
+        await db.execute(stmt)
+    await _mark_migration_applied(db, name)
+
+
 class SQLiteClient:
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = db_path or settings.sqlite_path
@@ -378,6 +486,12 @@ class SQLiteClient:
             await db.execute("CREATE INDEX IF NOT EXISTS ix_analysis_runs_owner_sha ON analysis_runs(owner_id, sha256)")
             await db.execute(CREATE_ANALYSIS_ISSUES_TABLE)
             await db.execute("CREATE INDEX IF NOT EXISTS ix_analysis_issues_run ON analysis_issues(run_id)")
+            await db.execute(CREATE_REVIEW_TASKS_TABLE)
+            for stmt in [s.strip() for s in CREATE_REVIEW_TASKS_INDEXES.split(";") if s.strip()]:
+                await db.execute(stmt)
+            await db.execute(CREATE_REVIEW_AUDITS_TABLE)
+            for stmt in [s.strip() for s in CREATE_REVIEW_AUDITS_INDEXES.split(";") if s.strip()]:
+                await db.execute(stmt)
             await db.execute(CREATE_RULES_TABLE)
             await db.execute(CREATE_DOCUMENTS_TABLE)
             await db.execute("CREATE INDEX IF NOT EXISTS ix_documents_owner ON documents(owner_id)")
@@ -390,6 +504,8 @@ class SQLiteClient:
             await db.commit()
 
             await _apply_doc_ir_migration(db)
+            await _apply_review_task_migration(db)
+            await _apply_review_audit_migration(db)
             await db.commit()
 
             await _validate_or_raise(db)

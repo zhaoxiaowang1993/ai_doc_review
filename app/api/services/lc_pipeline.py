@@ -17,7 +17,7 @@ from typing import Literal
 import fitz
 
 from common.logger import get_logger
-from common.models import DocumentIR, Issue, IssueStatusEnum, IssueType, Location, LocationAnchor, LocationTypeEnum, ReviewRule, RiskLevel
+from common.models import DocumentIR, Issue, IssueStatusEnum, IssueType, Location, LocationAnchor, LocationTypeEnum, ReviewRule, RiskLevel, TriggeredRuleSnapshotItem
 from config.config import settings
 from services.bbox import bbox_to_quadpoints
 from services.mineru_client import MinerUClient
@@ -351,18 +351,47 @@ class LangChainPipeline:
                     suggested_fix=(raw.suggested_fix if isinstance(raw, ReviewIssue) else ""),
                     explanation=(raw.explanation if isinstance(raw, ReviewIssue) else ""),
                     risk_level=risk_level,
+                    triggered_rules_snapshot=self._build_triggered_rules_snapshot(issue_type, custom_rules),
                     location=location,
                     review_initiated_by=user_id,
                     review_initiated_at_UTC=timestamp_iso,
                 )
             )
 
-        return issues
+        return self._merge_issues_with_same_anchor(issues)
 
     def _chunk_paragraphs(self, paragraphs: List[Dict[str, Any]], size: int) -> List[List[Dict[str, Any]]]:
         if size == -1:
             return [paragraphs]
         return [paragraphs[i : i + size] for i in range(0, len(paragraphs), size)]
+
+    def _merge_issues_with_same_anchor(self, issues: List[Issue]) -> List[Issue]:
+        merged: Dict[str, Issue] = {}
+        for issue in issues:
+            loc = issue.location.model_dump() if hasattr(issue.location, "model_dump") else (issue.location or {})
+            key = json.dumps(
+                {
+                    "doc_id": issue.doc_id,
+                    "text": issue.text,
+                    "node_id": loc.get("node_id"),
+                    "page_num": loc.get("page_num"),
+                    "para_index": loc.get("para_index"),
+                    "start_offset": loc.get("start_offset"),
+                    "end_offset": loc.get("end_offset"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            if key not in merged:
+                merged[key] = issue
+                continue
+            existing = merged[key]
+            current_names = {r.rule_name for r in (existing.triggered_rules_snapshot or [])}
+            for item in issue.triggered_rules_snapshot or []:
+                if item.rule_name not in current_names:
+                    existing.triggered_rules_snapshot.append(item)
+                    current_names.add(item.rule_name)
+        return list(merged.values())
 
     def _ir_to_paragraphs(self, ir: DocumentIR) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -451,6 +480,30 @@ class LangChainPipeline:
         
         # 默认返回中等风险
         return RiskLevel.medium
+
+    def _build_triggered_rules_snapshot(
+        self,
+        issue_type: str,
+        custom_rules: List[ReviewRule] | None = None,
+    ) -> list[TriggeredRuleSnapshotItem]:
+        if custom_rules:
+            matched = [r for r in custom_rules if r.name == issue_type]
+            if matched:
+                return [
+                    TriggeredRuleSnapshotItem(
+                        rule_id=r.id,
+                        rule_name=r.name,
+                        rule_content=r.description,
+                        risk_level=r.risk_level,
+                    )
+                    for r in matched
+                ]
+        builtin = {
+            "Grammar & Spelling": "检查拼写、语法、标点和表达规范性。",
+            "Definitive Language": "检查绝对化、无条件承诺、确定性措辞等高风险表达。",
+        }
+        content = builtin.get(issue_type, f"触发规则：{issue_type}")
+        return [TriggeredRuleSnapshotItem(rule_name=issue_type, rule_content=content)]
 
     async def _process_chunk(
         self,
@@ -558,13 +611,14 @@ class LangChainPipeline:
                     suggested_fix=(raw.suggested_fix if isinstance(raw, ReviewIssue) else ""),
                     explanation=(raw.explanation if isinstance(raw, ReviewIssue) else ""),
                     risk_level=risk_level,
+                    triggered_rules_snapshot=self._build_triggered_rules_snapshot(issue_type, custom_rules),
                     location=location,
                     review_initiated_by=user_id,
                     review_initiated_at_UTC=timestamp_iso,
                 )
             )
 
-        return issues
+        return self._merge_issues_with_same_anchor(issues)
 
 
 async def _locate_issue_location(

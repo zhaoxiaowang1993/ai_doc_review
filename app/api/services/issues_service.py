@@ -1,18 +1,35 @@
 from common.logger import get_logger
 from datetime import datetime, timezone
 import json
+import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import asyncio
-from common.models import DocumentIR, Issue, IssueStatusEnum, ModifiedFieldsModel, DismissalFeedbackModel, ReviewRule
+from langchain_core.messages import HumanMessage, SystemMessage
+from common.models import (
+    DocumentIR,
+    IRPatch,
+    IRPatchOp,
+    Issue,
+    IssueStatusEnum,
+    ModifiedFieldsModel,
+    DismissalFeedbackModel,
+    ReviewRule,
+    TaskExecutionModeEnum,
+    TaskStatusEnum,
+)
 from database.analysis_issues_repository import AnalysisIssuesRepository
 from database.analysis_runs_repository import AnalysisRunsRepository
+from database.document_assets_repository import DocumentAssetsRepository
 from database.documents_repository import DocumentsRepository
 from database.issues_repository import IssuesRepository
+from database.review_tasks_repository import ReviewTasksRepository
+from database.review_audits_repository import ReviewAuditsRepository
 from security.auth import User
 from services.lc_pipeline import LangChainPipeline
 from services.hitl_agent import HitlIssuesAgent
+from services.storage_provider import LocalStorageProvider
 
 logging = get_logger(__name__)
 
@@ -32,12 +49,20 @@ class IssuesService:
         analysis_issues_repository: AnalysisIssuesRepository,
         documents_repository: DocumentsRepository,
         pipeline: LangChainPipeline,
+        review_tasks_repository: ReviewTasksRepository | None = None,
+        review_audits_repository: ReviewAuditsRepository | None = None,
+        document_assets_repository: DocumentAssetsRepository | None = None,
+        storage_provider: LocalStorageProvider | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.issues_repository = issues_repository
         self.analysis_runs_repository = analysis_runs_repository
         self.analysis_issues_repository = analysis_issues_repository
         self.documents_repository = documents_repository
+        self.review_tasks_repository = review_tasks_repository
+        self.review_audits_repository = review_audits_repository
+        self.document_assets_repository = document_assets_repository
+        self.storage_provider = storage_provider
         self.hitl = (
             HitlIssuesAgent(model=self.pipeline.llm, issues_repository=self.issues_repository)
             if hasattr(self.pipeline, "llm")
@@ -45,6 +70,7 @@ class IssuesService:
         )
         self._review_tasks: Dict[Tuple[str, str], asyncio.Task] = {}
         self._review_tasks_lock = asyncio.Lock()
+        self._task_jobs: Dict[str, asyncio.Task] = {}
 
     async def get_issues_data(self, doc_id: str, *, owner_id: str) -> List[Issue]:
         try:
@@ -326,11 +352,17 @@ class IssuesService:
         issues: List[Issue] = []
         for c in canonical:
             location = None
+            triggered_rules_snapshot = []
             try:
                 raw = c.get("location_json")
                 location = json.loads(raw) if raw else None
             except Exception:
                 location = None
+            try:
+                trs_raw = c.get("triggered_rules_snapshot")
+                triggered_rules_snapshot = json.loads(trs_raw) if isinstance(trs_raw, str) and trs_raw else (trs_raw or [])
+            except Exception:
+                triggered_rules_snapshot = []
 
             issues.append(
                 Issue(
@@ -346,6 +378,7 @@ class IssuesService:
                     explanation=c.get("explanation") or "",
                     risk_level=c.get("risk_level"),
                     location=location,
+                    triggered_rules_snapshot=triggered_rules_snapshot,
                     review_initiated_by=review_initiated_by,
                     review_initiated_at_UTC=review_initiated_at_utc,
                 )
@@ -721,23 +754,22 @@ class IssuesService:
         self, issue_id: str, user: User, modified_fields: ModifiedFieldsModel | None = None
     ) -> Issue:
         try:
-            if self.hitl is None:
-                raise RuntimeError("HITL is unavailable")
             update_fields = {
                 "status": IssueStatusEnum.accepted.value,
                 "resolved_by": user.oid,
                 "resolved_at_UTC": datetime.now(timezone.utc).isoformat(),
             }
-
             if modified_fields:
                 update_fields["modified_fields"] = modified_fields.model_dump(exclude_none=True)
-
-            return await self.hitl.apply_update_with_hitl(
-                thread_id=f"issue:{issue_id}:{uuid4()}",
-                issue_id=issue_id,
-                update_fields=update_fields,
+            updated = await self.issues_repository.update_issue(issue_id, owner_id=user.oid, fields=update_fields)
+            await self._create_audit_log(
                 owner_id=user.oid,
+                doc_id=updated.doc_id,
+                issue_id=updated.id,
+                action="issue.accept",
+                payload={"status": updated.status, "modified_fields": update_fields.get("modified_fields")},
             )
+            return updated
         except Exception as e:
             logging.error(f"Failed to accept issue {issue_id}: {e}")
             raise
@@ -746,23 +778,22 @@ class IssuesService:
         self, issue_id: str, user: User, dismissal_feedback: DismissalFeedbackModel | None = None
     ) -> Issue:
         try:
-            if self.hitl is None:
-                raise RuntimeError("HITL is unavailable")
             update_fields = {
                 "status": IssueStatusEnum.dismissed.value,
                 "resolved_by": user.oid,
                 "resolved_at_UTC": datetime.now(timezone.utc).isoformat(),
             }
-
             if dismissal_feedback:
-                update_fields["dismissal_feedback"] = dismissal_feedback.model_dump()
-
-            return await self.hitl.apply_update_with_hitl(
-                thread_id=f"issue:{issue_id}:{uuid4()}",
-                issue_id=issue_id,
-                update_fields=update_fields,
+                update_fields["dismissal_feedback"] = dismissal_feedback.model_dump(exclude_none=True)
+            updated = await self.issues_repository.update_issue(issue_id, owner_id=user.oid, fields=update_fields)
+            await self._create_audit_log(
                 owner_id=user.oid,
+                doc_id=updated.doc_id,
+                issue_id=updated.id,
+                action="issue.dismiss",
+                payload={"status": updated.status, "dismissal_feedback": update_fields.get("dismissal_feedback")},
             )
+            return updated
         except Exception as e:
             logging.error(f"Failed to dismiss issue {issue_id}: {e}")
             raise
@@ -774,16 +805,412 @@ class IssuesService:
         feedback: DismissalFeedbackModel | None = None,
     ) -> Issue:
         try:
-            if self.hitl is None:
-                raise RuntimeError("HITL is unavailable")
             if feedback is None or feedback.model_dump(exclude_none=True) == {}:
-                return await self.hitl.get_issue(issue_id, owner_id=user.oid)
-            return await self.hitl.apply_update_with_hitl(
-                thread_id=f"issue:{issue_id}:{uuid4()}",
-                issue_id=issue_id,
-                update_fields={"dismissal_feedback": feedback.model_dump(exclude_none=True)},
+                return await self.issues_repository.get_issue(issue_id, owner_id=user.oid)
+            updated = await self.issues_repository.update_issue(
+                issue_id,
                 owner_id=user.oid,
+                fields={"dismissal_feedback": feedback.model_dump(exclude_none=True)},
             )
+            await self._create_audit_log(
+                owner_id=user.oid,
+                doc_id=updated.doc_id,
+                issue_id=updated.id,
+                action="issue.feedback",
+                payload=feedback.model_dump(exclude_none=True),
+            )
+            return updated
         except Exception as e:
             logging.error(f"Failed to provide feedback on issue {issue_id}: {e}")
             raise
+
+    async def create_review_task_for_issue(
+        self,
+        *,
+        doc_id: str,
+        issue_id: str,
+        issue_action: str,
+        suggestion: str,
+        content: str,
+        execution_mode: TaskExecutionModeEnum,
+        user: User,
+    ) -> Dict[str, Any]:
+        if self.review_tasks_repository is None:
+            raise RuntimeError("Review task repository unavailable")
+        now = datetime.now(timezone.utc).isoformat()
+        task_id = str(uuid4())
+        task = {
+            "id": task_id,
+            "owner_id": user.oid,
+            "document_id": doc_id,
+            "issue_id": issue_id,
+            "issue_action": issue_action,
+            "execution_mode": execution_mode.value,
+            "suggestion": suggestion,
+            "content": content,
+            "status": (
+                TaskStatusEnum.created.value
+                if execution_mode == TaskExecutionModeEnum.auto_apply
+                else TaskStatusEnum.completed.value
+            ),
+            "created_at_utc": now,
+            "updated_at_utc": now,
+            "error_message": None,
+            "revision_asset_id": None,
+        }
+        await self.review_tasks_repository.create(task)
+        await self._create_audit_log(
+            owner_id=user.oid,
+            doc_id=doc_id,
+            issue_id=issue_id,
+            action="task.create",
+            payload={"task_id": task_id, "execution_mode": execution_mode.value, "issue_action": issue_action},
+        )
+        return task
+
+    async def list_review_tasks(self, *, doc_id: str, owner_id: str) -> List[Dict[str, Any]]:
+        if self.review_tasks_repository is None:
+            return []
+        return await self.review_tasks_repository.list_by_doc(doc_id, owner_id=owner_id)
+
+    async def get_review_task(self, *, task_id: str, owner_id: str) -> Dict[str, Any]:
+        if self.review_tasks_repository is None:
+            raise RuntimeError("Review task repository unavailable")
+        task = await self.review_tasks_repository.get_by_id(task_id, owner_id=owner_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found.")
+        return task
+
+    def spawn_auto_apply_task(
+        self,
+        *,
+        task_id: str,
+        owner_id: str,
+        issue: Issue,
+        suggestion: str,
+    ) -> None:
+        async def runner():
+            await self._run_auto_apply_task(task_id=task_id, owner_id=owner_id, issue=issue, suggestion=suggestion)
+
+        task = asyncio.create_task(runner())
+        self._task_jobs[task_id] = task
+
+        def _cleanup(_t: asyncio.Task) -> None:
+            if self._task_jobs.get(task_id) is _t:
+                self._task_jobs.pop(task_id, None)
+
+        task.add_done_callback(_cleanup)
+
+    async def _run_auto_apply_task(self, *, task_id: str, owner_id: str, issue: Issue, suggestion: str) -> None:
+        if self.review_tasks_repository is None or self.document_assets_repository is None or self.storage_provider is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        await self.review_tasks_repository.update_fields(
+            task_id,
+            owner_id=owner_id,
+            fields={"status": TaskStatusEnum.running.value, "updated_at_utc": now, "error_message": None},
+        )
+        try:
+            row = await self.documents_repository.get_row_by_id(issue.doc_id, owner_id=owner_id)
+            if not row:
+                raise RuntimeError("Document not found")
+            mime = str(row.get("mime_type") or "")
+            if mime.startswith("application/pdf"):
+                await self.review_tasks_repository.update_fields(
+                    task_id,
+                    owner_id=owner_id,
+                    fields={"status": TaskStatusEnum.skipped.value, "updated_at_utc": datetime.now(timezone.utc).isoformat()},
+                )
+                return
+            ir_asset_id = row.get("ir_asset_id")
+            if not ir_asset_id:
+                raise RuntimeError("IR asset not found")
+            asset = await self.document_assets_repository.get_by_id(ir_asset_id)
+            if not asset:
+                raise RuntimeError("IR asset not found")
+            ir_data = json.loads(self.storage_provider.open(asset["storage_key"]).read_text(encoding="utf-8"))
+            ir = DocumentIR(**ir_data)
+            op = await self._build_ir_patch_op(issue=issue, ir=ir, suggestion=suggestion)
+            if op is None:
+                raise RuntimeError("Cannot locate editable IR node for this issue")
+            patch = IRPatch(ops=[op])
+            patched_ir = self._apply_ir_patch(ir=ir, patch=patch)
+            payload = json.dumps(patched_ir.model_dump(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            stored = self.storage_provider.put_object(
+                storage_key=f"objects/{issue.doc_id}.ir.rev.{task_id}.json",
+                mime_type="application/json",
+                data=payload,
+            )
+            revision_asset_id = str(uuid4())
+            now2 = datetime.now(timezone.utc).isoformat()
+            await self.document_assets_repository.create(
+                {
+                    "id": revision_asset_id,
+                    "document_id": issue.doc_id,
+                    "kind": "ir_json_revision",
+                    "storage_provider": stored.storage_provider,
+                    "storage_key": stored.storage_key,
+                    "mime_type": stored.mime_type,
+                    "size_bytes": stored.size_bytes,
+                    "sha256": stored.sha256,
+                    "created_at_utc": now2,
+                }
+            )
+            await self.documents_repository.update_fields(
+                issue.doc_id,
+                owner_id=owner_id,
+                fields={"ir_asset_id": revision_asset_id, "ir_status": "ready", "ir_error_message": None},
+            )
+            await self.review_tasks_repository.update_fields(
+                task_id,
+                owner_id=owner_id,
+                fields={
+                    "status": TaskStatusEnum.completed.value,
+                    "updated_at_utc": now2,
+                    "revision_asset_id": revision_asset_id,
+                    "error_message": None,
+                },
+            )
+            await self._create_audit_log(
+                owner_id=owner_id,
+                doc_id=issue.doc_id,
+                issue_id=issue.id,
+                action="task.auto_apply.completed",
+                payload={"task_id": task_id, "revision_asset_id": revision_asset_id},
+            )
+        except Exception as e:
+            await self.review_tasks_repository.update_fields(
+                task_id,
+                owner_id=owner_id,
+                fields={
+                    "status": TaskStatusEnum.failed.value,
+                    "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "error_message": str(e),
+                },
+            )
+            await self._create_audit_log(
+                owner_id=owner_id,
+                doc_id=issue.doc_id,
+                issue_id=issue.id,
+                action="task.auto_apply.failed",
+                payload={"task_id": task_id, "error": str(e)},
+            )
+
+    async def _build_ir_patch_op(self, *, issue: Issue, ir: DocumentIR, suggestion: str) -> IRPatchOp | None:
+        location = issue.location.model_dump() if hasattr(issue.location, "model_dump") else (issue.location or {})
+        node_id = location.get("node_id")
+        if not node_id:
+            return None
+        original_text = self._get_ir_node_text(ir, node_id)
+        if original_text is None:
+            return None
+        start = location.get("start_offset")
+        end = location.get("end_offset")
+        issue_text = (issue.text or "").strip()
+        if issue_text:
+            need_relocate = not isinstance(start, int) or not isinstance(end, int) or end <= start
+            if not need_relocate:
+                span_text = original_text[start:end]
+                span_len = end - start
+                too_wide = span_len > max(len(issue_text) * 3, 12)
+                not_cover_issue = issue_text not in span_text
+                need_relocate = too_wide or not_cover_issue
+            if need_relocate:
+                preferred = start if isinstance(start, int) else None
+                idx = self._find_occurrence_near(original_text, issue_text, preferred)
+                if idx >= 0:
+                    start = idx
+                    end = idx + len(issue_text)
+        if not isinstance(start, int) or not isinstance(end, int) or end <= start:
+            start = 0
+            end = len(original_text)
+        start = max(0, min(len(original_text), start))
+        end = max(start, min(len(original_text), end))
+        target_text = original_text[start:end]
+        issue_text_for_patch = issue_text
+        if not issue_text_for_patch and target_text and len(target_text) <= 16:
+            issue_text_for_patch = target_text
+        replacement = await self._rewrite_with_llm(
+            issue=issue,
+            full_text=original_text,
+            target_text=target_text or original_text,
+            suggestion=suggestion,
+        )
+        hint = self._extract_replacement_hint(suggestion) or (suggestion or "").strip()
+        if self._should_fallback_phrase_replace(target_text=target_text, replacement=replacement):
+            replacement = self._fallback_phrase_replace(
+                target_text=target_text,
+                issue_text=issue_text_for_patch,
+                hint=hint,
+            )
+        if not replacement:
+            replacement = hint
+        if not replacement:
+            replacement = target_text or original_text
+        return IRPatchOp(node_id=node_id, start_offset=start, end_offset=end, text=replacement)
+
+    def _find_occurrence_near(self, text: str, keyword: str, preferred_start: int | None) -> int:
+        if not text or not keyword:
+            return -1
+        positions: list[int] = []
+        begin = 0
+        while begin <= len(text) - len(keyword):
+            idx = text.find(keyword, begin)
+            if idx < 0:
+                break
+            positions.append(idx)
+            begin = idx + 1
+        if not positions:
+            return -1
+        if preferred_start is None:
+            return positions[0]
+        return min(positions, key=lambda p: abs(p - preferred_start))
+
+    def _should_fallback_phrase_replace(self, *, target_text: str, replacement: str) -> bool:
+        target = (target_text or "").strip()
+        repl = (replacement or "").strip()
+        if not target:
+            return False
+        if not repl:
+            return True
+        if any(k in repl for k in ("建议", "例如", "比如", "修改为", "替换为")):
+            return True
+        if len(target) >= 8 and len(repl) <= max(2, len(target) // 4):
+            return True
+        return False
+
+    def _fallback_phrase_replace(self, *, target_text: str, issue_text: str, hint: str) -> str:
+        target = (target_text or "").strip()
+        phrase = (issue_text or "").strip()
+        repl = self._extract_replacement_hint(hint).strip() or (hint or "").strip()
+        if not repl:
+            return target
+        if phrase and phrase in target:
+            return target.replace(phrase, repl, 1)
+        return repl
+
+    def _extract_replacement_hint(self, text: str) -> str:
+        raw = (text or "").strip()
+        if not raw:
+            return ""
+        quoted = re.findall(r"[“\"]([^”\"\n]{1,200})[”\"]", raw)
+        if quoted:
+            return max((q.strip() for q in quoted if q.strip()), key=len, default="")
+        patterns = [
+            r"(?:修改为|改为|替换为|写为|应为|可改为|建议改为|建议修改为)\s*[:：]?\s*([^\n。；;]+)",
+            r"(?:例如|比如)\s*[:：]?\s*([^\n。；;]+)",
+        ]
+        for p in patterns:
+            m = re.search(p, raw)
+            if m:
+                candidate = m.group(1).strip().strip("“”\"'。；; ")
+                if candidate:
+                    return candidate
+        return raw
+
+    def _render_rule_constraints(self, issue: Issue) -> str:
+        snapshots = issue.triggered_rules_snapshot or []
+        rows: list[str] = []
+        for item in snapshots:
+            if hasattr(item, "model_dump"):
+                data = item.model_dump()
+            elif isinstance(item, dict):
+                data = item
+            else:
+                data = {}
+            name = str(data.get("rule_name") or "").strip()
+            content = str(data.get("rule_content") or "").strip()
+            if name or content:
+                rows.append(f"- {name}: {content}".strip())
+        if not rows:
+            return f"- {issue.type}: 请满足该问题类型对应的规则要求"
+        return "\n".join(rows)
+
+    async def _rewrite_with_llm(self, *, issue: Issue, full_text: str, target_text: str, suggestion: str) -> str:
+        hint = self._extract_replacement_hint(suggestion)
+        rules_text = self._render_rule_constraints(issue)
+        prompt = (
+            "你是文书修订助手。请根据修改建议、规则约束和上下文，只输出用于替换目标片段的一段文本。"
+            "\n输出要求："
+            "\n1) 只输出替换文本，不要任何解释、前后缀、引号、标点说明。"
+            "\n2) 不能输出“建议/修改为/例如/比如”等提示性措辞。"
+            "\n3) 保持原文语境与语气，不改动目标片段之外内容。"
+            "\n4) 必须满足规则约束。"
+            f"\n\n完整语境：{full_text}"
+            f"\n目标片段：{target_text}"
+            f"\n修改建议：{suggestion}"
+            f"\n建议候选替换词：{hint}"
+            f"\n规则约束：\n{rules_text}"
+        )
+        try:
+            resp = await self.pipeline.llm.ainvoke(
+                [SystemMessage(content="你是文书修订助手。"), HumanMessage(content=prompt)]
+            )
+            content = resp.content if hasattr(resp, "content") else resp
+            if isinstance(content, list):
+                content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+            text = str(content).strip().strip("“”\"' ")
+            cleaned = self._extract_replacement_hint(text)
+            return cleaned or hint or (suggestion or "").strip()
+        except Exception:
+            return hint or (suggestion or "").strip()
+
+    def _get_ir_node_text(self, ir: DocumentIR, node_id: str) -> str | None:
+        for block in ir.blocks:
+            if getattr(block, "type", "") == "paragraph" and block.id == node_id:
+                return "".join([r.text for r in (block.runs or [])])
+            if getattr(block, "type", "") == "table":
+                for row in block.rows or []:
+                    for cell in row.cells or []:
+                        for para in cell.blocks or []:
+                            if para.id == node_id:
+                                return "".join([r.text for r in (para.runs or [])])
+        return None
+
+    def _apply_ir_patch(self, *, ir: DocumentIR, patch: IRPatch) -> DocumentIR:
+        for op in patch.ops:
+            for block in ir.blocks:
+                if getattr(block, "type", "") == "paragraph" and block.id == op.node_id:
+                    source = "".join([r.text for r in (block.runs or [])])
+                    new_text = source[: op.start_offset] + op.text + source[op.end_offset :]
+                    block.runs = [type(block.runs[0])(id=block.runs[0].id, text=new_text)] if block.runs else []
+                    return ir
+                if getattr(block, "type", "") == "table":
+                    for row in block.rows or []:
+                        for cell in row.cells or []:
+                            for para in cell.blocks or []:
+                                if para.id == op.node_id:
+                                    source = "".join([r.text for r in (para.runs or [])])
+                                    new_text = source[: op.start_offset] + op.text + source[op.end_offset :]
+                                    para.runs = [type(para.runs[0])(id=para.runs[0].id, text=new_text)] if para.runs else []
+                                    return ir
+        return ir
+
+    async def list_review_audits(self, *, doc_id: str, owner_id: str) -> List[Dict[str, Any]]:
+        if self.review_audits_repository is None:
+            return []
+        return await self.review_audits_repository.list_by_doc(doc_id=doc_id, owner_id=owner_id)
+
+    async def _create_audit_log(
+        self,
+        *,
+        owner_id: str,
+        doc_id: str,
+        issue_id: str | None,
+        action: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        if self.review_audits_repository is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        await self.review_audits_repository.create(
+            {
+                "id": str(uuid4()),
+                "owner_id": owner_id,
+                "document_id": doc_id,
+                "issue_id": issue_id,
+                "action": action,
+                "payload": json.dumps(payload, ensure_ascii=False),
+                "created_at_utc": now,
+            }
+        )

@@ -262,13 +262,6 @@ export function IssueCard({ docId, issue, selected, onSelect, onUpdate }: IssueC
                 接受
               </Button>
               <Button
-                appearance="secondary"
-                disabledFocusable={hitlLoading}
-                onClick={openHitlEditDialog}
-              >
-                编辑并执行
-              </Button>
-              <Button
                 disabledFocusable={dismissing}
                 icon={
                   dismissing ? (

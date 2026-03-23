@@ -18,6 +18,51 @@ function paragraphText(p: IRParagraph): string {
 
 type TextRange = { start: number, end: number, tone: 'yellow' | 'red', priority: number }
 
+function findNodeTextById(ir: DocumentIR | undefined, nodeId: string): string | null {
+  if (!ir) return null
+  for (const block of ir.blocks ?? []) {
+    if (isParagraph(block) && block.id === nodeId) {
+      return paragraphText(block)
+    }
+    if (isTable(block)) {
+      for (const row of block.rows ?? []) {
+        for (const cell of row.cells ?? []) {
+          for (const para of cell.blocks ?? []) {
+            if (para.id === nodeId) {
+              return paragraphText(para)
+            }
+          }
+        }
+      }
+    }
+  }
+  return null
+}
+
+function pickOccurrence(text: string, keyword: string, preferredStart?: number): number {
+  if (!keyword) return -1
+  if (typeof preferredStart !== 'number' || preferredStart < 0) return text.indexOf(keyword)
+  const all: number[] = []
+  let from = 0
+  while (from <= text.length - keyword.length) {
+    const idx = text.indexOf(keyword, from)
+    if (idx === -1) break
+    all.push(idx)
+    from = idx + 1
+  }
+  if (!all.length) return -1
+  let best = all[0]
+  let bestDist = Math.abs(best - preferredStart)
+  for (const idx of all.slice(1)) {
+    const dist = Math.abs(idx - preferredStart)
+    if (dist < bestDist) {
+      best = idx
+      bestDist = dist
+    }
+  }
+  return best
+}
+
 function clampRange(r: { start: number, end: number }, len: number): { start: number, end: number } | null {
   const start = Math.max(0, Math.min(len, r.start))
   const end = Math.max(0, Math.min(len, r.end))
@@ -71,8 +116,8 @@ function renderHighlightedText(text: string, ranges: TextRange[]): JSX.Element {
   return <>{out}</>
 }
 
-export function DocumentIRViewer(props: { docId: string, issues?: Issue[], selectedIssue?: Issue }) {
-  const { docId, issues, selectedIssue } = props
+export function DocumentIRViewer(props: { docId: string, issues?: Issue[], selectedIssue?: Issue, reloadToken?: number }) {
+  const { docId, issues, selectedIssue, reloadToken } = props
   const [ir, setIr] = useState<DocumentIR>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
@@ -81,12 +126,43 @@ export function DocumentIRViewer(props: { docId: string, issues?: Issue[], selec
     const loc = selectedIssue?.location
     if (!loc || typeof loc !== 'object') return null
     if ((loc as any).type !== 'ir_anchor') return null
-    return {
-      nodeId: (loc as any).node_id as string | undefined,
-      start: (loc as any).start_offset as number | undefined,
-      end: (loc as any).end_offset as number | undefined,
+    const nodeId = (loc as any).node_id as string | undefined
+    const start = (loc as any).start_offset as number | undefined
+    const end = (loc as any).end_offset as number | undefined
+    const status = selectedIssue?.status
+    const modifiedFix = selectedIssue?.modified_fields?.suggested_fix?.trim()
+    const suggestedFix = selectedIssue?.suggested_fix?.trim()
+    const preferredFix = modifiedFix || suggestedFix || ''
+    if (status === 'accepted' && nodeId && preferredFix) {
+      const nodeText = findNodeTextById(ir, nodeId)
+      if (nodeText) {
+        const idx = pickOccurrence(nodeText, preferredFix, start)
+        if (idx >= 0) {
+          return {
+            nodeId,
+            start: idx,
+            end: idx + preferredFix.length,
+          }
+        }
+      }
     }
-  }, [selectedIssue])
+    if (status === 'accepted' && nodeId) {
+      const nodeText = findNodeTextById(ir, nodeId)
+      if (nodeText && typeof start === 'number' && typeof end === 'number') {
+        const oldSpan = nodeText.slice(Math.max(0, start), Math.max(0, end))
+        const issueText = (selectedIssue?.text ?? '').trim()
+        if (issueText && oldSpan && oldSpan.includes(issueText)) {
+          return { nodeId, start, end }
+        }
+      }
+      return null
+    }
+    return {
+      nodeId,
+      start,
+      end,
+    }
+  }, [selectedIssue, ir])
 
   const rangesByNodeId = useMemo(() => {
     const map = new Map<string, TextRange[]>()
@@ -129,7 +205,7 @@ export function DocumentIRViewer(props: { docId: string, issues?: Issue[], selec
     }
     load()
     return () => { cancelled = true }
-  }, [docId])
+  }, [docId, reloadToken])
 
   useEffect(() => {
     if (!anchor?.nodeId) return

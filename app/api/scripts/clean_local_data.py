@@ -1,3 +1,9 @@
+"""
+用途：清理本地测试产生的数据文件与缓存。
+使用场景：需要在本地快速重置运行环境、排查脏数据影响时执行。
+主要功能：删除 SQLite 数据库文件、文档对象存储目录与 MinerU 缓存目录。
+"""
+
 import argparse
 import shutil
 import sys

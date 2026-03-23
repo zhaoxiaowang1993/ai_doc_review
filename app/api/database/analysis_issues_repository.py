@@ -53,6 +53,10 @@ class AnalysisIssuesRepository:
                 ),
                 "para_index": (issue.location.para_index if issue.location is not None else None),
                 "created_at_utc": now,
+                "triggered_rules_snapshot": json.dumps(
+                    [r.model_dump() if hasattr(r, "model_dump") else r for r in (issue.triggered_rules_snapshot or [])],
+                    ensure_ascii=False,
+                ),
             }
             await self.db_client.store_item("analysis_issues", row)
             out.append(row)
