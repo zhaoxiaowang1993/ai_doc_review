@@ -65,6 +65,9 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64  # 适配阿里云服务器架构
           push: true
+          # Aliyun ACR does not support Buildx attestation manifests.
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true  # 禁用缓存，保证镜像最新
